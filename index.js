@@ -6,6 +6,9 @@ const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = "candia123";
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const IG_TOKEN = process.env.IG_TOKEN;
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const SHEETS_URL = process.env.SHEETS_URL;
 
 const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
 
@@ -68,6 +71,8 @@ FLUXO DE RESERVA
 5. Perguntar: "Podemos seguir com a reserva nesse formato?"
 6. Se sim: perguntar nome do aniversariante e contato
 7. Confirmar a reserva e pedir aviso em caso de imprevisto
+8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
+[RESERVA: data=DD/MM, dia=DIRASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
 
 CASOS ESPECIAIS — NÃO CONFIRME, INFORME QUE VAI VERIFICAR
 - Véspera de feriado
@@ -95,6 +100,58 @@ Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
 app.use(express.json());
 
+async function getHistory(userId) {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/get/hist:${userId}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    return data.result ? JSON.parse(data.result) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(userId, history) {
+  try {
+    await fetch(`${UPSTASH_URL}/set/hist:${userId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ value: JSON.stringify(history), ex: 86400 })
+    });
+  } catch (err) {
+    console.error("Erro ao salvar histórico:", err);
+  }
+}
+
+async function saveToSheets(data) {
+  try {
+    await fetch(SHEETS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    console.log("Reserva gravada na planilha!");
+  } catch (err) {
+    console.error("Erro ao gravar na planilha:", err);
+  }
+}
+
+function extractReservation(text) {
+  const match = text.match(/\[RESERVA:(.*?)\]/);
+  if (!match) return null;
+  const parts = match[1].split(",");
+  const obj = {};
+  parts.forEach(p => {
+    const [k, v] = p.split("=");
+    if (k && v) obj[k.trim()] = v.trim();
+  });
+  return obj;
+}
+
 app.get("/", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -113,12 +170,23 @@ app.post("/", async (req, res) => {
   try {
     const entry = req.body?.entry?.[0];
     const messaging = entry?.messaging?.[0];
+
+    if (messaging?.read || messaging?.delivery || messaging?.message_edit) {
+      console.log("Evento de sistema ignorado");
+      return;
+    }
+
     const message = messaging?.message?.text;
     const senderId = messaging?.sender?.id;
 
     if (!message || !senderId) return;
 
     console.log(`Mensagem de ${senderId}: ${message}`);
+
+    const history = await getHistory(senderId);
+    history.push({ role: "user", content: message });
+
+    if (history.length > 20) history.splice(0, 2);
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -131,21 +199,36 @@ app.post("/", async (req, res) => {
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: message }]
+        messages: history
       })
     });
 
     const claudeData = await claudeRes.json();
     const reply = claudeData.content?.[0]?.text;
 
+    if (!reply) {
+      console.error("Sem resposta do Claude:", claudeData);
+      return;
+    }
+
     console.log("Resposta Claude:", reply);
+
+    history.push({ role: "assistant", content: reply });
+    await saveHistory(senderId, history);
+
+    const reservation = extractReservation(reply);
+    if (reservation) {
+      await saveToSheets(reservation);
+    }
+
+    const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").trim();
 
     await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${IG_TOKEN}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         recipient: { id: senderId },
-        message: { text: reply }
+        message: { text: cleanReply }
       })
     });
 

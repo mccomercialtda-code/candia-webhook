@@ -9,6 +9,9 @@ const IG_TOKEN = process.env.IG_TOKEN;
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const SHEETS_URL = process.env.SHEETS_URL;
+const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
+const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
+const OWNER_PHONE = process.env.OWNER_PHONE;
 
 const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
 
@@ -72,14 +75,20 @@ FLUXO DE RESERVA
 6. Se sim: perguntar nome do aniversariante e contato
 7. Confirmar a reserva e pedir aviso em caso de imprevisto
 8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
-[RESERVA: data=DD/MM, dia=DIRASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
+[RESERVA: data=DD/MM, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
 
-CASOS ESPECIAIS — NÃO CONFIRME, INFORME QUE VAI VERIFICAR
+CASOS QUE PRECISAM DE INTERVENÇÃO HUMANA
+Quando identificar qualquer um dos casos abaixo, responda normalmente ao cliente E inclua ao final da resposta:
+[ESCALAR: motivo=DESCRICAO_BREVE]
+
+Casos para escalar:
 - Véspera de feriado
 - Cliente quer evento fechado com orçamento personalizado
-- Cliente pergunta se vai estar cheio num dia específico
+- Cliente demonstra insatisfação ou reclamação
+- Cliente insiste em algo que foge completamente do padrão
+- Pergunta que você genuinamente não sabe responder
 
-Nesses casos responda: "Deixa eu verificar essa informação pra vocês — em breve retornamos! 😊"
+Nesses casos responda ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos! 😊"
 
 PERGUNTAS FREQUENTES
 Cardápio: disponível nos destaques do Instagram.
@@ -140,8 +149,36 @@ async function saveToSheets(data) {
   }
 }
 
+async function notifyOwner(message) {
+  try {
+    await fetch(`https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone: OWNER_PHONE,
+        message: message
+      })
+    });
+    console.log("Dono notificado no WhatsApp!");
+  } catch (err) {
+    console.error("Erro ao notificar dono:", err);
+  }
+}
+
 function extractReservation(text) {
   const match = text.match(/\[RESERVA:(.*?)\]/);
+  if (!match) return null;
+  const parts = match[1].split(",");
+  const obj = {};
+  parts.forEach(p => {
+    const [k, v] = p.split("=");
+    if (k && v) obj[k.trim()] = v.trim();
+  });
+  return obj;
+}
+
+function extractEscalation(text) {
+  const match = text.match(/\[ESCALAR:(.*?)\]/);
   if (!match) return null;
   const parts = match[1].split(",");
   const obj = {};
@@ -219,9 +256,19 @@ app.post("/", async (req, res) => {
     const reservation = extractReservation(reply);
     if (reservation) {
       await saveToSheets(reservation);
+      await notifyOwner(
+        `✅ Nova reserva confirmada!\n📅 ${reservation.data} (${reservation.dia})\n🎂 ${reservation.aniversariante}\n🪑 ${reservation.lugares} lugares\n👥 Total: ${reservation.total_esperado}\n📲 ${reservation.contato}`
+      );
     }
 
-    const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").trim();
+    const escalation = extractEscalation(reply);
+    if (escalation) {
+      await notifyOwner(
+        `⚠️ Atenção — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${senderId}\nÚltima mensagem: "${message}"`
+      );
+    }
+
+    const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").replace(/\[ESCALAR:.*?\]/g, "").trim();
 
     await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${IG_TOKEN}`, {
       method: "POST",

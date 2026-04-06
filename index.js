@@ -17,6 +17,9 @@ const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em B
 
 Responda sempre em português, com tom simpático e informal. Use emojis com moderação. Fale em primeira pessoa do plural (seguramos, aguardamos, conseguimos). Nunca invente informações que não estão neste prompt. Se não souber responder algo, diga que vai verificar e que em breve retornam.
 
+FORMATAÇÃO
+Não use markdown, asteriscos, negrito, itálico ou qualquer formatação especial. O Instagram não suporta essas formatações. Escreva em texto simples corrido.
+
 FUNCIONAMENTO
 Não abrimos às segundas-feiras.
 Terça a quinta: 17h às 00h
@@ -69,19 +72,18 @@ Domingo: máximo 10 reservas
 Terça, quarta e quinta: sem limite
 
 PROMOÇÃO
-Reservas com mais de 10 pessoas ganham 2 litros de chope grátis 🍻
+Reservas com mais de 10 pessoas ganham 2 litros de chope grátis.
 Mencionar sempre que o grupo tiver mais de 10 pessoas.
 
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas?
-2. Verificar disponibilidade para a data antes de confirmar
-3. Com base no dia, informar as regras
-4. Se grupo maior que o limite: informar normalmente e perguntar total de convidados esperados
-5. Se mais de 10 pessoas: mencionar promoção do chope
-6. Perguntar: "Podemos seguir com a reserva nesse formato?"
-7. Se sim: perguntar nome do aniversariante e contato
-8. Confirmar a reserva e pedir aviso em caso de imprevisto
-9. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
+2. Com base no dia, informar as regras
+3. Se grupo maior que o limite: informar normalmente e perguntar total de convidados esperados
+4. Se mais de 10 pessoas: mencionar promoção do chope
+5. Perguntar: "Podemos seguir com a reserva nesse formato?"
+6. Se sim: perguntar nome do aniversariante e contato
+7. Confirmar a reserva e pedir aviso em caso de imprevisto
+8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
 [RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
 
 CASOS QUE PRECISAM DE INTERVENÇÃO HUMANA
@@ -95,7 +97,7 @@ Casos para escalar:
 - Cliente insiste em algo que foge completamente do padrão
 - Pergunta que você genuinamente não sabe responder
 
-Nesses casos responda ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos! 😊"
+Nesses casos responda ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos!"
 
 PERGUNTAS FREQUENTES
 Cardápio: disponível nos destaques do Instagram.
@@ -107,10 +109,10 @@ Preciso mandar nomes?: não. Comanda individual.
 Reservas esgotadas: área descoberta por ordem de chegada. Sugerir outra data ou @angubardeestufa (sábados).
 
 TOM E EXEMPLOS
-- "Aos sábados conseguimos reservar uma mesa de apoio com até 8 lugares sentados — para garantir mais espaço pra galera circular, dançar e curtir muito o samba 😃🕺💃 Se a turma for maior, não tem problema! Pode vir todo mundo, que aqui é igual coração de mãe 🧡"
-- "Fazendo sua reserva e trazendo mais de 10 pessoas, vocês ganham 2 litros de chope 🍻"
-- "Confirmamos a reserva e te aguardamos aqui 😉 Se houver algum imprevisto e você não puder comparecer, nos avisa por favor?"
-- "O valor do couvert vai integralmente pros músicos — essa é nossa forma de contribuir com a comunidade musical de BH 🧡"
+- "Aos sábados conseguimos reservar uma mesa de apoio com até 8 lugares sentados — para garantir mais espaço pra galera circular, dançar e curtir muito o samba. Se a turma for maior, não tem problema! Pode vir todo mundo, que aqui é igual coração de mãe."
+- "Fazendo sua reserva e trazendo mais de 10 pessoas, vocês ganham 2 litros de chope."
+- "Confirmamos a reserva e te aguardamos aqui. Se houver algum imprevisto e você não puder comparecer, nos avisa por favor?"
+- "O valor do couvert vai integralmente pros músicos — essa é nossa forma de contribuir com a comunidade musical de BH."
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
@@ -145,17 +147,31 @@ async function saveHistory(userId, history) {
   }
 }
 
-async function countReservations(data) {
+async function isPaused(userId) {
   try {
-    const res = await fetch(SHEETS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "count", data })
+    const res = await fetch(`${UPSTASH_URL}/get/paused:${userId}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
     });
-    const result = await res.json();
-    return result.count || 0;
+    const data = await res.json();
+    return !!data.result;
   } catch {
-    return 0;
+    return false;
+  }
+}
+
+async function pauseConversation(userId) {
+  try {
+    await fetch(`${UPSTASH_URL}/set/paused:${userId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ value: "1", ex: 7200 })
+    });
+    console.log(`Conversa com ${userId} pausada por 2 horas`);
+  } catch (err) {
+    console.error("Erro ao pausar conversa:", err);
   }
 }
 
@@ -226,8 +242,16 @@ app.post("/", async (req, res) => {
     const entry = req.body?.entry?.[0];
     const messaging = entry?.messaging?.[0];
 
-    if (messaging?.read || messaging?.delivery || messaging?.message_edit || messaging?.message?.is_echo) {
+    if (messaging?.read || messaging?.delivery || messaging?.message_edit) {
       console.log("Evento de sistema ignorado");
+      return;
+    }
+
+    if (messaging?.message?.is_echo) {
+      const echoRecipient = messaging?.recipient?.id;
+      if (echoRecipient) {
+        await pauseConversation(echoRecipient);
+      }
       return;
     }
 
@@ -235,6 +259,12 @@ app.post("/", async (req, res) => {
     const senderId = messaging?.sender?.id;
 
     if (!message || !senderId) return;
+
+    const paused = await isPaused(senderId);
+    if (paused) {
+      console.log(`Conversa com ${senderId} pausada — ignorando`);
+      return;
+    }
 
     console.log(`Mensagem de ${senderId}: ${message}`);
 
@@ -274,14 +304,14 @@ app.post("/", async (req, res) => {
     if (reservation) {
       await saveToSheets(reservation);
       await notifyOwner(
-        `✅ Nova reserva confirmada!\n📅 ${reservation.data} (${reservation.dia})\n🎂 ${reservation.aniversariante}\n🪑 ${reservation.lugares} lugares\n👥 Total: ${reservation.total_esperado}\n📲 ${reservation.contato}`
+        `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}`
       );
     }
 
     const escalation = extractEscalation(reply);
     if (escalation) {
       await notifyOwner(
-        `⚠️ Atenção — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${senderId}\nÚltima mensagem: "${message}"`
+        `Atencao — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${senderId}\nUltima mensagem: "${message}"`
       );
     }
 

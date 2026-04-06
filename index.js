@@ -226,7 +226,7 @@ app.post("/", async (req, res) => {
     const entry = req.body?.entry?.[0];
     const messaging = entry?.messaging?.[0];
 
-    if (messaging?.read || messaging?.delivery || messaging?.message_edit) {
+    if (messaging?.read || messaging?.delivery || messaging?.message_edit || messaging?.message?.is_echo) {
       console.log("Evento de sistema ignorado");
       return;
     }

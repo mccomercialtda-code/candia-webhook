@@ -8,13 +8,107 @@ const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const IG_TOKEN = process.env.IG_TOKEN;
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-const SHEETS_URL = process.env.SHEETS_URL;
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
 const DEBOUNCE_MS = 90000;
 
-function getSystemPrompt() {
+const LIMITES = {
+  "sexta":   { coberto: 10, descoberto: 0,  total: 10 },
+  "sábado":  { coberto: 10, descoberto: 4,  total: 14 },
+  "domingo": { coberto: 10, descoberto: 0,  total: 10 }
+};
+
+function getDiaSemana(dataStr) {
+  const [dia, mes, ano] = dataStr.split("/");
+  const d = new Date(`${ano}-${mes}-${dia}`);
+  const dias = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+  return dias[d.getDay()];
+}
+
+async function contarReservasNotion(dataStr) {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: {
+          property: "Data",
+          rich_text: { equals: dataStr }
+        }
+      })
+    });
+    const data = await res.json();
+    return data.results?.length || 0;
+  } catch (err) {
+    console.error("Erro ao contar reservas no Notion:", err);
+    return 0;
+  }
+}
+
+async function verificarDisponibilidade(dataStr) {
+  const diaSemana = getDiaSemana(dataStr);
+  const limite = LIMITES[diaSemana];
+
+  if (!limite) {
+    return { disponivel: true, tipo: "ilimitado", diaSemana };
+  }
+
+  const count = await contarReservasNotion(dataStr);
+
+  if (count >= limite.total) {
+    return { disponivel: false, tipo: "esgotado", count, limite, diaSemana };
+  }
+
+  if (count >= limite.coberto) {
+    const vagasDescoberto = limite.total - count;
+    return { disponivel: true, tipo: "descoberto", count, limite, vagasDescoberto, diaSemana };
+  }
+
+  const vagasCoberto = limite.coberto - count;
+  return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto, diaSemana };
+}
+
+async function salvarReservaNaNotion(data) {
+  try {
+    const res = await fetch("https://api.notion.com/v1/pages", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        parent: { database_id: NOTION_DB_ID },
+        properties: {
+          "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
+          "Data": { rich_text: [{ text: { content: data.data || "" } }] },
+          "Dia": { rich_text: [{ text: { content: data.dia || "" } }] },
+          "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
+          "Lugares": { number: parseInt(data.lugares) || 0 },
+          "Total esperado": { number: parseInt(data.total_esperado) || 0 },
+          "Observações": { rich_text: [{ text: { content: data.observacao || "" } }] }
+        }
+      })
+    });
+    const result = await res.json();
+    if (result.id) {
+      console.log("Reserva gravada no Notion:", result.id);
+    } else {
+      console.error("Erro ao gravar no Notion:", JSON.stringify(result));
+    }
+  } catch (err) {
+    console.error("Erro ao gravar reserva no Notion:", err);
+  }
+}
+
+function getSystemPrompt(disponibilidade) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -24,11 +118,15 @@ function getSystemPrompt() {
     timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit"
   });
 
+  const dispInfo = disponibilidade
+    ? `\nDISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA\n${disponibilidade}\n`
+    : "";
+
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct com simpatia, informalidade e agilidade.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-
+${dispInfo}
 IDENTIDADE E TOM
 - Tom jovem, acolhedor e descontraído
 - Primeira pessoa do plural: "a gente", "conseguimos", "seguramos", "aguardamos"
@@ -60,31 +158,42 @@ PROMOÇÃO DE SÁBADO
 - Feijoada + chope pilsen por R$20 até as 14h (após esse horário vai para o preço normal do cardápio)
 - Só mencionar se o cliente perguntar
 
-PROMOÇÃO DO CHOPE
+PROMOÇÃO DO CHOPE PARA GRUPOS
 - Grupos com mais de 10 pessoas ganham 2 litros de chope grátis
 - Só mencionar se o cliente perguntar sobre condições ou promoções para aniversariante
+- NUNCA dizer que "não tem promoção" — simplesmente não mencionar a menos que perguntem
+- Se perguntarem se tem alguma condição especial para aniversariante: informar sobre os 2 litros de chope para grupos acima de 10 pessoas
 
 RESERVAS — REGRAS GERAIS
 - Reserva é opcional — garante o lugar. Sem reserva: ordem de chegada
 - Apenas UMA mesa por reserva — não é possível reservar duas mesas
-- Se o grupo for maior que o limite de lugares sentados: informar quantos lugares sentados conseguimos garantir e que o restante da turma pode vir em pé. Não usar expressões como "circulando" ou "dançando" — apenas "em pé".
+- Se o grupo for maior que o limite de lugares sentados: informar quantos lugares sentados conseguimos garantir e que o restante da turma pode vir em pé. Não usar expressões como "circulando" — apenas "em pé".
 - Só mencionar a possibilidade de mais cadeiras se o cliente pedir explicitamente mais lugares do que o limite
 - Sempre informar o horário limite da reserva ao apresentar as condições do dia
+- Após o horário limite, as mesas são por ordem de chegada — sem nenhuma garantia adicional
 
 RESERVAS — LIMITES POR DIA
-Terça e quarta: até 20 lugares | segurar até 19h
-Quinta: até 15 lugares | segurar até 19h
-Sexta: até 12 lugares (mesa de apoio) | segurar até 19h | máximo 10 reservas no dia
-Sábado: até 8 lugares (mesa de apoio) | segurar até 15h com tolerância de 15min | máximo 10 reservas cobertas (da 11ª à 14ª avisar que será área descoberta)
-Domingo: até 15 lugares | segurar até 14h | máximo 10 reservas no dia
+Terça e quarta: até 20 lugares | segurar até 19h | sem limite de reservas
+Quinta: até 15 lugares | segurar até 19h | sem limite de reservas
+Sexta: até 12 lugares (mesa de apoio) | segurar até 19h | máximo 10 reservas
+Sábado: até 8 lugares (mesa de apoio) | segurar até 15h com tolerância de 15min | máximo 10 reservas cobertas + até 4 descobertas
+Domingo: até 15 lugares | segurar até 14h | máximo 10 reservas
 
 SÁBADO — REGRAS ESPECIAIS
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - A reserva é segurada até 15h (horário da primeira banda), com tolerância de 15 minutinhos — após isso não conseguimos manter
-- Não mencionar área coberta/descoberta
+- Não mencionar área coberta/descoberta a menos que a disponibilidade consultada indique área descoberta
 - Não sugerir que o cliente chegue tarde nem mencionar horários das atrações como sugestão de chegada
+- Após 15h: mesas por ordem de chegada, sem garantia alguma
 - Se o cliente pedir mais de 8 lugares: informar que garantimos os 8 e que, se possível, colocamos mais cadeiras conforme disponibilidade na hora. Só mencionar isso se o cliente pedir explicitamente.
 - Se pedir duas mesas: explicar que fazemos apenas uma mesa por reserva
+
+DISPONIBILIDADE EM TEMPO REAL
+Quando o cliente informar a data desejada, o sistema já consulta automaticamente e injeta a informação acima. Use essa informação para:
+- Se esgotado: informar que não há mais vagas e sugerir outra data
+- Se área descoberta disponível: avisar que a reserva será na área descoberta e perguntar se aceita
+- Se coberto disponível: prosseguir normalmente
+- Se sem limite (terça a quinta): prosseguir normalmente
 
 PREFERÊNCIA DE LOCAL
 Se o cliente mencionar preferência (fundos, varanda, calçada, salão, corredor):
@@ -99,33 +208,36 @@ Domingo até 12h: aceitar reserva normalmente + [ESCALAR: motivo=Reserva para ho
 Domingo após 12h: apenas ordem de chegada. Convidar a vir mesmo assim.
 
 FERIADOS 2026 — ESCALAR SEMPRE
-Datas que requerem verificação (responder "Deixa eu verificar a disponibilidade pra essa data — em breve retornamos!"):
+Datas que requerem verificação:
 - 30/04 e 01/05 (Dia do Trabalho — quinta)
 - 10/06 e 11/06 (Corpus Christi — quinta)
 - 14/11 e 15/11 (Proclamação da República — domingo)
 - 19/11 e 20/11 (Consciência Negra — sexta)
 Segundas que são feriado (07/09, 12/10, 02/11): informar que não abrimos segundas.
+Quando escalar: responder apenas "Deixa eu verificar a disponibilidade pra essa data — em breve retornamos!" Não fazer perguntas adicionais.
 [ESCALAR: motivo=Reserva para feriado ou véspera de feriado]
 
 MÚSICOS QUE SE CANDIDATAM
-Se alguém se apresentar como músico interessado em tocar no Candiá, responder de forma simpática e curta:
+Se alguém se apresentar como músico interessado em tocar no Candiá:
 "A gente ama essa energia dos músicos de BH! 🎶 No momento estamos com a agenda bem preenchida com a galera que já toca aqui, mas deixa seu material registrado — havendo oportunidade, a gente entra em contato!"
 Não escalar. Não continuar o papo além disso.
 
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas? Não antecipar outras informações.
-2. Informar as regras do dia — incluindo obrigatoriamente o horário limite da reserva. Não mencionar couvert.
-3. Se grupo maior que o limite: informar quantos lugares sentados garantimos e que o restante pode vir em pé.
-4. Perguntar: "Podemos seguir com a reserva nesse formato?"
-5. Se sim: pedir nome do aniversariante e contato
-6. Se mencionar preferência de local: registrar na observação
-7. Confirmar a reserva. Não mencionar chope nem couvert na confirmação.
-8. Pedir aviso em caso de imprevisto
-9. Ao confirmar, incluir no final:
+2. Quando o cliente informar o dia, o sistema consulta a disponibilidade automaticamente
+3. Informar as regras do dia com base na disponibilidade — incluindo obrigatoriamente o horário limite
+4. Se esgotado: informar e sugerir outra data
+5. Se área descoberta: avisar e perguntar se aceita
+6. Se disponível: perguntar "Podemos seguir com a reserva nesse formato?"
+7. Se sim: pedir nome do aniversariante e contato
+8. Se mencionar preferência de local: registrar na observação
+9. Confirmar a reserva. Não mencionar chope nem couvert na confirmação.
+10. Pedir aviso em caso de imprevisto
+11. Ao confirmar, incluir no final:
 [RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N, observacao=TEXTO_OU_VAZIO]
 
 QUANDO ESCALAR
-Incluir [ESCALAR: motivo=DESCRICAO] ao final da resposta e dizer ao cliente "Deixa eu verificar essa informação pra vocês — em breve retornamos!":
+Incluir [ESCALAR: motivo=DESCRICAO] ao final e responder apenas "Deixa eu verificar essa informação pra vocês — em breve retornamos!" sem fazer perguntas adicionais:
 - Reserva para feriado ou véspera
 - Reserva para hoje (nos horários aceitos)
 - Evento fechado ou orçamento personalizado
@@ -265,19 +377,6 @@ async function setDebounceToken(userId, token) {
   await redisSet(`debounce:${userId}`, token, 300);
 }
 
-async function saveToSheets(data) {
-  try {
-    await fetch(SHEETS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
-    });
-    console.log("Reserva gravada na planilha!");
-  } catch (err) {
-    console.error("Erro ao gravar na planilha:", err);
-  }
-}
-
 async function notifyOwner(message) {
   try {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
@@ -322,6 +421,43 @@ function extractEscalation(text) {
     }
   });
   return obj;
+}
+
+function extractDates(text) {
+  const matches = text.match(/\d{1,2}\/\d{1,2}(?:\/\d{4})?/g) || [];
+  const now = new Date();
+  const year = now.getFullYear();
+  return matches.map(d => {
+    const parts = d.split("/");
+    if (parts.length === 2) return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${year}`;
+    return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${parts[2]}`;
+  });
+}
+
+function extractDayMentions(text) {
+  const now = new Date();
+  now.setHours(0,0,0,0);
+  const diasNomes = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+  const diasRegex = /\b(essa|este|próxima?|proxima?)?\s*(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\b/gi;
+  const found = [];
+  let match;
+  while ((match = diasRegex.exec(text)) !== null) {
+    const nomeDia = match[2].toLowerCase()
+      .replace("sabado","sábado")
+      .replace("terca","terça");
+    const targetDay = diasNomes.indexOf(nomeDia);
+    if (targetDay === -1) continue;
+    const currentDay = now.getDay();
+    let diff = targetDay - currentDay;
+    if (diff <= 0) diff += 7;
+    const target = new Date(now);
+    target.setDate(now.getDate() + diff);
+    const dd = String(target.getDate()).padStart(2,"0");
+    const mm = String(target.getMonth()+1).padStart(2,"0");
+    const yyyy = target.getFullYear();
+    found.push(`${dd}/${mm}/${yyyy}`);
+  }
+  return found;
 }
 
 async function sendInstagramMessage(userId, text) {
@@ -369,6 +505,25 @@ async function processMessages(userId, myToken) {
   const combinedMessage = pendingMessages.join("\n");
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
+  const datesFromText = extractDates(combinedMessage);
+  const datesFromDays = extractDayMentions(combinedMessage);
+  const allDates = [...new Set([...datesFromText, ...datesFromDays])];
+
+  let disponibilidadeInfo = "";
+  for (const data of allDates) {
+    const disp = await verificarDisponibilidade(data);
+    console.log(`Disponibilidade para ${data}:`, disp);
+    if (disp.tipo === "esgotado") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
+    } else if (disp.tipo === "descoberto") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
+    } else if (disp.tipo === "coberto") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
+    } else {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
+    }
+  }
+
   const history = await getHistory(userId);
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);
@@ -391,7 +546,7 @@ async function processMessages(userId, myToken) {
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
-        system: getSystemPrompt(),
+        system: getSystemPrompt(disponibilidadeInfo || null),
         messages: history
       })
     });
@@ -434,7 +589,7 @@ async function processMessages(userId, myToken) {
 
   const reservation = extractReservation(reply);
   if (reservation) {
-    await saveToSheets(reservation);
+    await salvarReservaNaNotion(reservation);
   }
 
   const escalation = extractEscalation(reply);

@@ -281,4 +281,11 @@ app.post("/", async (req, res) => {
       })
     });
     const igData = await igRes.json();
-    console.log("Resposta Graph API:", JSON.stringify(igData));
+    console.log("Resposta Graph API:", JSON.stringify(igData));} catch (err) {
+    console.error("Erro:", err);
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});

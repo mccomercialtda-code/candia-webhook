@@ -290,7 +290,7 @@ app.post("/", async (req, res) => {
       .replace(/\[ESCALAR:.*?\]/g, "")
       .trim();
 
-    const igRes = await fetch(`https://graph.facebook.com/v21.0/${senderId}/messages`, {
+    const igRes = await fetch(`https://graph.instagram.com/v25.0/17841401897917144/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

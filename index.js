@@ -272,7 +272,7 @@ app.post("/", async (req, res) => {
 
     const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").replace(/\[ESCALAR:.*?\]/g, "").trim();
 
-   const igRes = await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${IG_TOKEN}`, {
+   const igRes = await fetch(`https://graph.facebook.com/v21.0/17841401897917144/messages?access_token=${IG_TOKEN}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({

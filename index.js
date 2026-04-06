@@ -62,20 +62,27 @@ Domingo:
 - Segurar até 14h
 - Música ao vivo das 15h às 18h
 
+LIMITES DE RESERVA POR DIA
+Sexta: máximo 10 reservas
+Sábado: máximo 10 reservas na área coberta. Da 11ª à 14ª reserva, avisar que será na área descoberta e perguntar se aceita.
+Domingo: máximo 10 reservas
+Terça, quarta e quinta: sem limite
+
 PROMOÇÃO
 Reservas com mais de 10 pessoas ganham 2 litros de chope grátis 🍻
 Mencionar sempre que o grupo tiver mais de 10 pessoas.
 
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas?
-2. Com base no dia, informar as regras
-3. Se grupo maior que o limite: informar normalmente e perguntar total de convidados esperados
-4. Se mais de 10 pessoas: mencionar promoção do chope
-5. Perguntar: "Podemos seguir com a reserva nesse formato?"
-6. Se sim: perguntar nome do aniversariante e contato
-7. Confirmar a reserva e pedir aviso em caso de imprevisto
-8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
-[RESERVA: data=DD/MM, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
+2. Verificar disponibilidade para a data antes de confirmar
+3. Com base no dia, informar as regras
+4. Se grupo maior que o limite: informar normalmente e perguntar total de convidados esperados
+5. Se mais de 10 pessoas: mencionar promoção do chope
+6. Perguntar: "Podemos seguir com a reserva nesse formato?"
+7. Se sim: perguntar nome do aniversariante e contato
+8. Confirmar a reserva e pedir aviso em caso de imprevisto
+9. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
 
 CASOS QUE PRECISAM DE INTERVENÇÃO HUMANA
 Quando identificar qualquer um dos casos abaixo, responda normalmente ao cliente E inclua ao final da resposta:
@@ -138,6 +145,20 @@ async function saveHistory(userId, history) {
   }
 }
 
+async function countReservations(data) {
+  try {
+    const res = await fetch(SHEETS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "count", data })
+    });
+    const result = await res.json();
+    return result.count || 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function saveToSheets(data) {
   try {
     await fetch(SHEETS_URL, {
@@ -156,10 +177,7 @@ async function notifyOwner(message) {
     await fetch(`https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phone: OWNER_PHONE,
-        message: message
-      })
+      body: JSON.stringify({ phone: OWNER_PHONE, message })
     });
     console.log("Dono notificado no WhatsApp!");
   } catch (err) {
@@ -170,9 +188,8 @@ async function notifyOwner(message) {
 function extractReservation(text) {
   const match = text.match(/\[RESERVA:(.*?)\]/);
   if (!match) return null;
-  const parts = match[1].split(",");
   const obj = {};
-  parts.forEach(p => {
+  match[1].split(",").forEach(p => {
     const [k, v] = p.split("=");
     if (k && v) obj[k.trim()] = v.trim();
   });
@@ -182,9 +199,8 @@ function extractReservation(text) {
 function extractEscalation(text) {
   const match = text.match(/\[ESCALAR:(.*?)\]/);
   if (!match) return null;
-  const parts = match[1].split(",");
   const obj = {};
-  parts.forEach(p => {
+  match[1].split(",").forEach(p => {
     const [k, v] = p.split("=");
     if (k && v) obj[k.trim()] = v.trim();
   });
@@ -224,7 +240,6 @@ app.post("/", async (req, res) => {
 
     const history = await getHistory(senderId);
     history.push({ role: "user", content: message });
-
     if (history.length > 20) history.splice(0, 2);
 
     const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -270,18 +285,27 @@ app.post("/", async (req, res) => {
       );
     }
 
-    const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").replace(/\[ESCALAR:.*?\]/g, "").trim();
+    const cleanReply = reply
+      .replace(/\[RESERVA:.*?\]/g, "")
+      .replace(/\[ESCALAR:.*?\]/g, "")
+      .trim();
 
-   const igRes = await fetch(`https://graph.facebook.com/v21.0/17841401897917144/messages?access_token=${IG_TOKEN}`, {
+    const igRes = await fetch(`https://graph.facebook.com/v21.0/me/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "Authorization": `Bearer ${IG_TOKEN}`
+      },
       body: JSON.stringify({
         recipient: { id: senderId },
         message: { text: cleanReply }
       })
     });
+
     const igData = await igRes.json();
-    console.log("Resposta Graph API:", JSON.stringify(igData));} catch (err) {
+    console.log("Resposta Graph API:", JSON.stringify(igData));
+
+  } catch (err) {
     console.error("Erro:", err);
   }
 });

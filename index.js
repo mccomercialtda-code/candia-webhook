@@ -141,108 +141,13 @@ Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
 app.use(express.json());
 
-async function getHistory(userId) {
-  try {
-    const res = await fetch(`${UPSTASH_URL}/get/hist:${userId}`, {
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-    const data = await res.json();
-    if (!data.result) return [];
-    const parsed = JSON.parse(data.result);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function saveHistory(userId, history) {
+async function redisGet(key) {
   try {
-    await fetch(`${UPSTASH_URL}/set/hist:${userId}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${UPSTASH_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ value: JSON.stringify(history), ex: 86400 })
-    });
-  } catch (err) {
-    console.error("Erro ao salvar histórico:", err);
-  }
-}
-
-async function isPaused(userId) {
-  try {
-    const res = await fetch(`${UPSTASH_URL}/get/paused:${userId}`, {
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-    const data = await res.json();
-    return !!data.result;
-  } catch {
-    return false;
-  }
-}
-
-async function pauseConversation(userId) {
-  try {
-    await fetch(`${UPSTASH_URL}/set/paused:${userId}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${UPSTASH_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ value: "1", ex: 7200 })
-    });
-    console.log(`Conversa com ${userId} pausada por 2 horas`);
-  } catch (err) {
-    console.error("Erro ao pausar conversa:", err);
-  }
-}
-
-async function getPendingMessages(userId) {
-  try {
-    const res = await fetch(`${UPSTASH_URL}/get/pending:${userId}`, {
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-    const data = await res.json();
-    if (!data.result) return [];
-    const parsed = JSON.parse(data.result);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function addPendingMessage(userId, message) {
-  const messages = await getPendingMessages(userId);
-  messages.push(message);
-  try {
-    await fetch(`${UPSTASH_URL}/set/pending:${userId}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${UPSTASH_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ value: JSON.stringify(messages), ex: 300 })
-    });
-  } catch (err) {
-    console.error("Erro ao salvar mensagem pendente:", err);
-  }
-}
-
-async function clearPendingMessages(userId) {
-  try {
-    await fetch(`${UPSTASH_URL}/del/pending:${userId}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-  } catch (err) {
-    console.error("Erro ao limpar mensagens pendentes:", err);
-  }
-}
-
-async function getDebounceToken(userId) {
-  try {
-    const res = await fetch(`${UPSTASH_URL}/get/debounce:${userId}`, {
+    const res = await fetch(`${UPSTASH_URL}/get/${key}`, {
       headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
     });
     const data = await res.json();
@@ -252,19 +157,84 @@ async function getDebounceToken(userId) {
   }
 }
 
-async function setDebounceToken(userId, token) {
+async function redisSet(key, value, ex = 300) {
   try {
-    await fetch(`${UPSTASH_URL}/set/debounce:${userId}`, {
+    await fetch(`${UPSTASH_URL}/set/${key}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${UPSTASH_TOKEN}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ value: token, ex: 300 })
+      body: JSON.stringify({ value: typeof value === "string" ? value : JSON.stringify(value), ex })
     });
   } catch (err) {
-    console.error("Erro ao salvar debounce token:", err);
+    console.error(`Erro redis set ${key}:`, err);
   }
+}
+
+async function redisDel(key) {
+  try {
+    await fetch(`${UPSTASH_URL}/del/${key}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error(`Erro redis del ${key}:`, err);
+  }
+}
+
+async function getHistory(userId) {
+  const raw = await redisGet(`hist:${userId}`);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(userId, history) {
+  await redisSet(`hist:${userId}`, JSON.stringify(history), 86400);
+}
+
+async function isPaused(userId) {
+  const val = await redisGet(`paused:${userId}`);
+  return !!val;
+}
+
+async function pauseConversation(userId) {
+  await redisSet(`paused:${userId}`, "1", 7200);
+  console.log(`Conversa com ${userId} pausada por 2 horas`);
+}
+
+async function getPendingMessages(userId) {
+  const raw = await redisGet(`pending:${userId}`);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function addPendingMessage(userId, message) {
+  const messages = await getPendingMessages(userId);
+  messages.push(message);
+  await redisSet(`pending:${userId}`, JSON.stringify(messages), 300);
+}
+
+async function clearPendingMessages(userId) {
+  await redisDel(`pending:${userId}`);
+}
+
+async function getDebounceToken(userId) {
+  return await redisGet(`debounce:${userId}`);
+}
+
+async function setDebounceToken(userId, token) {
+  await redisSet(`debounce:${userId}`, token, 300);
 }
 
 async function saveToSheets(data) {
@@ -315,16 +285,14 @@ function extractEscalation(text) {
   return obj;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 async function processMessages(userId, myToken) {
   await sleep(DEBOUNCE_MS);
 
   const currentToken = await getDebounceToken(userId);
+  console.log(`Debounce check — userId: ${userId}, myToken: ${myToken}, currentToken: ${currentToken}`);
+
   if (currentToken !== myToken) {
-    console.log(`Debounce: nova mensagem chegou para ${userId}, cancelando esta execução`);
+    console.log(`Debounce: nova mensagem chegou para ${userId}, cancelando execução antiga`);
     return;
   }
 
@@ -336,7 +304,10 @@ async function processMessages(userId, myToken) {
   }
 
   const pendingMessages = await getPendingMessages(userId);
-  if (pendingMessages.length === 0) return;
+  if (pendingMessages.length === 0) {
+    console.log(`Nenhuma mensagem pendente para ${userId}`);
+    return;
+  }
 
   await clearPendingMessages(userId);
 
@@ -457,7 +428,7 @@ app.post("/", async (req, res) => {
     await addPendingMessage(senderId, message);
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
-    const newToken = Date.now().toString();
+    const newToken = `${senderId}_${Date.now()}`;
     await setDebounceToken(senderId, newToken);
 
     processMessages(senderId, newToken);

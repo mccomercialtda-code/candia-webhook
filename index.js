@@ -14,15 +14,24 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
 const DEBOUNCE_MS = 90000;
 
-const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
+function getSystemPrompt() {
+  const now = new Date();
+  const options = { timeZone: "America/Sao_Paulo", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" };
+  const dataHoje = now.toLocaleDateString("pt-BR", options);
+  const horaAgora = now.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+
+  return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
+
+DATA E HORA ATUAL
+Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use essa informação para interpretar expressões como "esta semana", "essa quinta", "amanhã", "hoje" etc.
 
 Responda sempre em português, com tom simpático e informal. Use emojis com moderação. Fale em primeira pessoa do plural (seguramos, aguardamos, conseguimos). Nunca invente informações que não estão neste prompt. Se não souber responder algo, diga que vai verificar e que em breve retornamos.
 
 FORMATAÇÃO
 Não use markdown, asteriscos, negrito, itálico ou qualquer formatação especial. O Instagram não suporta essas formatações. Escreva em texto simples corrido.
 
-TERMINOLOGIA
-Nunca diga "falar com o dono" ou "consultar o dono". Sempre use "vou verificar" ou "em breve retornamos".
+TERMINOLOGIA — REGRA ABSOLUTA
+Nunca use as palavras "dono", "proprietário", "responsável" ou qualquer referência a uma pessoa específica do bar. Sempre use "a gente", "nós", "vou verificar", "em breve retornamos", "vamos confirmar". Esta regra não tem exceção.
 
 FUNCIONAMENTO
 Não abrimos às segundas-feiras.
@@ -38,6 +47,10 @@ Horários:
 - Terça a sexta: 19h
 - Sábado: a primeira banda começa às 15h, o samba começa às 18h30
 - Domingo: 15h
+
+Quando o cliente perguntar sobre a programação específica de um dia, responder de forma objetiva:
+"Você pode conferir nos destaques do @ocandiabar no Instagram, no tópico agenda 😉"
+Não diga que vai verificar — direcione o cliente diretamente para os destaques.
 
 COUVERT ARTÍSTICO
 Terça a quinta: R$12 por pessoa
@@ -161,8 +174,8 @@ Casos para escalar:
 Nesses casos responder ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos!"
 
 PERGUNTAS FREQUENTES
-Cardápio: disponível nos destaques do Instagram.
-Programação / tem samba?: sexta, sábado e domingo têm roda de samba. Terça a quinta a programação varia — ver destaques, tópico "agenda".
+Cardápio: disponível nos destaques do @ocandiabar no Instagram.
+Programação / tem samba?: sexta, sábado e domingo têm roda de samba. Terça a quinta a programação varia — ver destaques do @ocandiabar, tópico "agenda".
 Espaço kids: não temos.
 Posso trazer bolo?: sim, sem garantia de geladeira. Sem talheres/pratos, só guardanapos.
 Local do palco/mesa: não é fixo, definido no dia.
@@ -175,8 +188,10 @@ TOM E EXEMPLOS DE MENSAGEM
 - "A gente consegue garantir os 8 lugares sentados e, à medida que sua turma chegar, se precisar de mais cadeiras e ainda tivermos disponibilidade, colocamos mais pra vocês."
 - "Não conseguimos confirmar o local exato da reserva com antecedência, mas vamos registrar sua preferência e faremos o possível."
 - "O couvert é R$10 por pessoa e vai integralmente pros músicos — é nossa forma de contribuir com a comunidade musical de BH."
+- "Você pode conferir nos destaques do @ocandiabar no Instagram, no tópico agenda 😉"
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
+}
 
 app.use(express.json());
 
@@ -372,7 +387,7 @@ async function processMessages(userId, myToken) {
     return;
   }
 
-  const paused = await isPaused(userId);
+  let paused = await isPaused(userId);
   if (paused) {
     console.log(`Conversa com ${userId} pausada — ignorando`);
     await clearPendingMessages(userId);
@@ -394,6 +409,13 @@ async function processMessages(userId, myToken) {
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);
 
+  // Verificar pausa antes de chamar Claude
+  paused = await isPaused(userId);
+  if (paused) {
+    console.log(`Conversa com ${userId} pausada antes do Claude — cancelando`);
+    return;
+  }
+
   const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -404,7 +426,7 @@ async function processMessages(userId, myToken) {
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
-      system: SYSTEM_PROMPT,
+      system: getSystemPrompt(),
       messages: history
     })
   });
@@ -418,6 +440,13 @@ async function processMessages(userId, myToken) {
   }
 
   console.log("Resposta Claude:", reply);
+
+  // Verificar pausa após Claude responder
+  paused = await isPaused(userId);
+  if (paused) {
+    console.log(`Conversa com ${userId} pausada após Claude — cancelando envio`);
+    return;
+  }
 
   history.push({ role: "assistant", content: reply });
   await saveHistory(userId, history);
@@ -438,12 +467,6 @@ async function processMessages(userId, myToken) {
     .replace(/\[RESERVA:.*?\]/gs, "")
     .replace(/\[ESCALAR:.*?\]/gs, "")
     .trim();
-
-  const stillPaused = await isPaused(userId);
-  if (stillPaused) {
-    console.log(`Conversa com ${userId} foi pausada durante o processamento — cancelando envio`);
-    return;
-  }
 
   await sendInstagramMessage(userId, cleanReply);
 }

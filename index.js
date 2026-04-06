@@ -13,6 +13,7 @@ const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
 const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
 const OWNER_PHONE = process.env.OWNER_PHONE;
 const IG_ACCOUNT_ID = "17841401897917144";
+const DEBOUNCE_MS = 90000;
 
 const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
 
@@ -197,6 +198,75 @@ async function pauseConversation(userId) {
   }
 }
 
+async function getPendingMessages(userId) {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/get/pending:${userId}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    if (!data.result) return [];
+    const parsed = JSON.parse(data.result);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function addPendingMessage(userId, message) {
+  const messages = await getPendingMessages(userId);
+  messages.push(message);
+  try {
+    await fetch(`${UPSTASH_URL}/set/pending:${userId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ value: JSON.stringify(messages), ex: 300 })
+    });
+  } catch (err) {
+    console.error("Erro ao salvar mensagem pendente:", err);
+  }
+}
+
+async function clearPendingMessages(userId) {
+  try {
+    await fetch(`${UPSTASH_URL}/del/pending:${userId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error("Erro ao limpar mensagens pendentes:", err);
+  }
+}
+
+async function getDebounceToken(userId) {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/get/debounce:${userId}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    return data.result || null;
+  } catch {
+    return null;
+  }
+}
+
+async function setDebounceToken(userId, token) {
+  try {
+    await fetch(`${UPSTASH_URL}/set/debounce:${userId}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ value: token, ex: 300 })
+    });
+  } catch (err) {
+    console.error("Erro ao salvar debounce token:", err);
+  }
+}
+
 async function saveToSheets(data) {
   try {
     await fetch(SHEETS_URL, {
@@ -249,6 +319,98 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function processMessages(userId, myToken) {
+  await sleep(DEBOUNCE_MS);
+
+  const currentToken = await getDebounceToken(userId);
+  if (currentToken !== myToken) {
+    console.log(`Debounce: nova mensagem chegou para ${userId}, cancelando esta execução`);
+    return;
+  }
+
+  const paused = await isPaused(userId);
+  if (paused) {
+    console.log(`Conversa com ${userId} pausada — ignorando`);
+    await clearPendingMessages(userId);
+    return;
+  }
+
+  const pendingMessages = await getPendingMessages(userId);
+  if (pendingMessages.length === 0) return;
+
+  await clearPendingMessages(userId);
+
+  const combinedMessage = pendingMessages.join("\n");
+  console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
+
+  const history = await getHistory(userId);
+  history.push({ role: "user", content: combinedMessage });
+  if (history.length > 20) history.splice(0, 2);
+
+  const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      messages: history
+    })
+  });
+
+  const claudeData = await claudeRes.json();
+  const reply = claudeData.content?.[0]?.text;
+
+  if (!reply) {
+    console.error("Sem resposta do Claude:", claudeData);
+    return;
+  }
+
+  console.log("Resposta Claude:", reply);
+
+  history.push({ role: "assistant", content: reply });
+  await saveHistory(userId, history);
+
+  const reservation = extractReservation(reply);
+  if (reservation) {
+    await saveToSheets(reservation);
+    await notifyOwner(
+      `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}`
+    );
+  }
+
+  const escalation = extractEscalation(reply);
+  if (escalation) {
+    await notifyOwner(
+      `Atencao — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
+    );
+  }
+
+  const cleanReply = reply
+    .replace(/\[RESERVA:.*?\]/g, "")
+    .replace(/\[ESCALAR:.*?\]/g, "")
+    .trim();
+
+  const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Authorization": `Bearer ${IG_TOKEN}`
+    },
+    body: JSON.stringify({
+      recipient: { id: userId },
+      message: { text: cleanReply }
+    })
+  });
+
+  const igData = await igRes.json();
+  console.log("Resposta Graph API:", JSON.stringify(igData));
+}
+
 app.get("/", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -274,12 +436,7 @@ app.post("/", async (req, res) => {
     if (messaging?.message?.is_echo) {
       const echoSender = messaging?.sender?.id;
       const echoRecipient = messaging?.recipient?.id;
-      if (echoSender === IG_ACCOUNT_ID && echoRecipient) {
-        const paused = await isPaused(echoRecipient);
-        if (!paused) {
-          console.log(`Eco do bot detectado para ${echoRecipient} — não pausar`);
-        }
-      } else if (echoSender !== IG_ACCOUNT_ID && echoRecipient) {
+      if (echoSender !== IG_ACCOUNT_ID && echoRecipient) {
         await pauseConversation(echoRecipient);
         console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada`);
       }
@@ -297,82 +454,13 @@ app.post("/", async (req, res) => {
       return;
     }
 
-    console.log(`Mensagem de ${senderId}: ${message}`);
+    await addPendingMessage(senderId, message);
+    console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
-    await sleep(75000);
+    const newToken = Date.now().toString();
+    await setDebounceToken(senderId, newToken);
 
-    const stillPaused = await isPaused(senderId);
-    if (stillPaused) {
-      console.log(`Conversa com ${senderId} foi pausada durante o delay — cancelando resposta`);
-      return;
-    }
-
-    const history = await getHistory(senderId);
-    history.push({ role: "user", content: message });
-    if (history.length > 20) history.splice(0, 2);
-
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": CLAUDE_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1024,
-        system: SYSTEM_PROMPT,
-        messages: history
-      })
-    });
-
-    const claudeData = await claudeRes.json();
-    const reply = claudeData.content?.[0]?.text;
-
-    if (!reply) {
-      console.error("Sem resposta do Claude:", claudeData);
-      return;
-    }
-
-    console.log("Resposta Claude:", reply);
-
-    history.push({ role: "assistant", content: reply });
-    await saveHistory(senderId, history);
-
-    const reservation = extractReservation(reply);
-    if (reservation) {
-      await saveToSheets(reservation);
-      await notifyOwner(
-        `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}`
-      );
-    }
-
-    const escalation = extractEscalation(reply);
-    if (escalation) {
-      await notifyOwner(
-        `Atencao — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${senderId}\nUltima mensagem: "${message}"`
-      );
-    }
-
-    const cleanReply = reply
-      .replace(/\[RESERVA:.*?\]/g, "")
-      .replace(/\[ESCALAR:.*?\]/g, "")
-      .trim();
-
-    const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "Authorization": `Bearer ${IG_TOKEN}`
-      },
-      body: JSON.stringify({
-        recipient: { id: senderId },
-        message: { text: cleanReply }
-      })
-    });
-
-    const igData = await igRes.json();
-    console.log("Resposta Graph API:", JSON.stringify(igData));
+    processMessages(senderId, newToken);
 
   } catch (err) {
     console.error("Erro:", err);

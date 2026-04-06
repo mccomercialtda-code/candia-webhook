@@ -36,7 +36,7 @@ Sexta, sábado e domingo: roda de samba ao vivo
 Terça a quinta: programação variada — indicar os destaques do Instagram, tópico "agenda", para confirmar
 Horários:
 - Terça a sexta: 19h
-- Sábado: 1ª atração às 15h, 2ª atração às 18h30
+- Sábado: a primeira banda começa às 15h, o samba começa às 18h30
 - Domingo: 15h
 
 COUVERT ARTÍSTICO
@@ -44,6 +44,7 @@ Terça a quinta: R$12 por pessoa
 Sexta a domingo: R$10 por pessoa
 Todo o valor vai integralmente para os músicos.
 Só mencionar o couvert se o cliente perguntar diretamente sobre ele.
+Não há isenção de couvert para aniversariante ou acompanhante. Se perguntarem, responder: "O couvert é R$X por pessoa e vai integralmente pros músicos — é nossa forma de contribuir com a comunidade musical de BH."
 
 REGRAS DE RESERVA POR DIA
 Reserva é opcional — garante o lugar. Sem reserva, atendimento por ordem de chegada.
@@ -65,8 +66,9 @@ Sexta:
 Sábado:
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - Se a turma for maior, pode vir todo mundo — o restante curte em pé, que aqui é igual coração de mãe
-- Seguramos a reserva até 15h (horário da 1ª atração), com tolerância de 15 minutinhos
+- Seguramos a reserva até 15h (horário da primeira banda), com tolerância de 15 minutinhos
 - Após esse tempo não conseguimos manter a mesa
+- IMPORTANTE: não sugerir que o cliente chegue tarde nem mencionar os horários das atrações como sugestão de chegada. Reforçar sempre que a reserva é segurada até 15h e que é importante chegar antes disso.
 - Não mencionar área coberta ou descoberta
 - Sempre perguntar: "Podemos seguir com a reserva nesse formato?"
 - Se o cliente pedir mais de 8 lugares: dizer que garantimos os 8 e que, à medida que a turma chegar, se possível colocamos mais cadeiras. Não escalar esse caso.
@@ -90,7 +92,7 @@ Terça, quarta e quinta: sem limite
 
 PROMOÇÃO DO CHOPE
 Reservas com mais de 10 pessoas ganham 2 litros de chope grátis.
-Só mencionar quando o cliente perguntar sobre condições ou promoções para aniversariante. Não mencionar proativamente.
+Só mencionar quando o cliente perguntar sobre condições ou promoções para aniversariante. Nunca mencionar proativamente — nem durante o fluxo de reserva, nem na confirmação final.
 
 RESERVAS PARA O MESMO DIA
 Se o cliente quiser reservar para o dia atual, siga estas regras:
@@ -136,13 +138,14 @@ FLUXO DE RESERVA
 4. Perguntar: "Podemos seguir com a reserva nesse formato?"
 5. Se sim: perguntar nome do aniversariante e contato
 6. Se mencionar preferência de local: registrar na observação
-7. Confirmar a reserva e pedir aviso em caso de imprevisto
+7. Confirmar a reserva e pedir aviso em caso de imprevisto. Não mencionar chope na confirmação.
 8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
 [RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N, observacao=PREFERENCIA_LOCAL_OU_VAZIO]
 
 MENSAGENS DE MÍDIA (áudio, foto, vídeo, sticker)
-Se o cliente enviar qualquer tipo de mídia sem texto, responder:
+Se o cliente enviar áudio, foto, vídeo ou sticker sem nenhum texto, responder:
 "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
+IMPORTANTE: mensagens de texto que contenham números de telefone, nomes ou qualquer outro conteúdo escrito são mensagens de texto normais — nunca bloquear.
 
 CASOS QUE PRECISAM DE INTERVENÇÃO
 Quando identificar qualquer um dos casos abaixo, responda normalmente ao cliente E inclua ao final da resposta:
@@ -171,6 +174,7 @@ TOM E EXEMPLOS DE MENSAGEM
 - "Confirmamos a reserva e te aguardamos aqui. Se houver algum imprevisto e você não puder comparecer, nos avisa por favor?"
 - "A gente consegue garantir os 8 lugares sentados e, à medida que sua turma chegar, se precisar de mais cadeiras e ainda tivermos disponibilidade, colocamos mais pra vocês."
 - "Não conseguimos confirmar o local exato da reserva com antecedência, mas vamos registrar sua preferência e faremos o possível."
+- "O couvert é R$10 por pessoa e vai integralmente pros músicos — é nossa forma de contribuir com a comunidade musical de BH."
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
@@ -249,8 +253,8 @@ async function isPaused(userId) {
 }
 
 async function pauseConversation(userId) {
-  await redisSet(`paused:${userId}`, "1", 7200);
-  console.log(`Conversa com ${userId} pausada por 2 horas`);
+  await redisSet(`paused:${userId}`, "1", 10800);
+  console.log(`Conversa com ${userId} pausada por 3 horas`);
 }
 
 async function getPendingMessages(userId) {
@@ -305,14 +309,14 @@ async function notifyOwner(message) {
         text: message
       })
     });
-    console.log("Dono notificado no Telegram!");
+    console.log("Notificado no Telegram!");
   } catch (err) {
     console.error("Erro ao notificar no Telegram:", err);
   }
 }
 
 function extractReservation(text) {
-  const match = text.match(/\[RESERVA:(.*?)\]/);
+  const match = text.match(/\[RESERVA:(.*?)\]/s);
   if (!match) return null;
   const obj = {};
   match[1].split(",").forEach(p => {
@@ -327,7 +331,7 @@ function extractReservation(text) {
 }
 
 function extractEscalation(text) {
-  const match = text.match(/\[ESCALAR:(.*?)\]/);
+  const match = text.match(/\[ESCALAR:(.*?)\]/s);
   if (!match) return null;
   const obj = {};
   match[1].split(",").forEach(p => {
@@ -421,9 +425,6 @@ async function processMessages(userId, myToken) {
   const reservation = extractReservation(reply);
   if (reservation) {
     await saveToSheets(reservation);
-    await notifyOwner(
-      `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}${reservation.observacao ? "\nObservacao: " + reservation.observacao : ""}`
-    );
   }
 
   const escalation = extractEscalation(reply);
@@ -470,11 +471,10 @@ app.post("/", async (req, res) => {
     }
 
     if (messaging?.message?.is_echo) {
-      const echoSender = messaging?.sender?.id;
       const echoRecipient = messaging?.recipient?.id;
-      if (echoSender !== IG_ACCOUNT_ID && echoRecipient) {
+      if (echoRecipient) {
         await pauseConversation(echoRecipient);
-        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada`);
+        console.log(`Echo detectado — conversa com ${echoRecipient} pausada por 3 horas`);
       }
       return;
     }
@@ -489,9 +489,9 @@ app.post("/", async (req, res) => {
     }
 
     const message = messaging?.message?.text;
-    const hasMedia = messaging?.message?.attachments || messaging?.message?.sticker_id;
+    const hasMedia = !message && (messaging?.message?.attachments || messaging?.message?.sticker_id);
 
-    if (!message && hasMedia) {
+    if (hasMedia) {
       await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
       return;
     }

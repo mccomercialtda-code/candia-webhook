@@ -272,7 +272,7 @@ app.post("/", async (req, res) => {
 
     const cleanReply = reply.replace(/\[RESERVA:.*?\]/g, "").replace(/\[ESCALAR:.*?\]/g, "").trim();
 
-    await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${IG_TOKEN}`, {
+   const igRes = await fetch(`https://graph.facebook.com/v18.0/me/messages?access_token=${IG_TOKEN}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -280,12 +280,5 @@ app.post("/", async (req, res) => {
         message: { text: cleanReply }
       })
     });
-
-  } catch (err) {
-    console.error("Erro:", err);
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+    const igData = await igRes.json();
+    console.log("Resposta Graph API:", JSON.stringify(igData));

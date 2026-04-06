@@ -55,24 +55,13 @@ async function contarReservasNotion(dataStr) {
 async function verificarDisponibilidade(dataStr) {
   const diaSemana = getDiaSemana(dataStr);
   const limite = LIMITES[diaSemana];
-
-  if (!limite) {
-    return { disponivel: true, tipo: "ilimitado", diaSemana };
-  }
-
+  if (!limite) return { disponivel: true, tipo: "ilimitado", diaSemana };
   const count = await contarReservasNotion(dataStr);
-
-  if (count >= limite.total) {
-    return { disponivel: false, tipo: "esgotado", count, limite, diaSemana };
-  }
-
+  if (count >= limite.total) return { disponivel: false, tipo: "esgotado", count, limite, diaSemana };
   if (count >= limite.coberto) {
-    const vagasDescoberto = limite.total - count;
-    return { disponivel: true, tipo: "descoberto", count, limite, vagasDescoberto, diaSemana };
+    return { disponivel: true, tipo: "descoberto", count, limite, vagasDescoberto: limite.total - count, diaSemana };
   }
-
-  const vagasCoberto = limite.coberto - count;
-  return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto, diaSemana };
+  return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto: limite.coberto - count, diaSemana };
 }
 
 async function salvarReservaNaNotion(data) {
@@ -189,7 +178,7 @@ SÁBADO — REGRAS ESPECIAIS
 - Se pedir duas mesas: explicar que fazemos apenas uma mesa por reserva
 
 DISPONIBILIDADE EM TEMPO REAL
-Quando o cliente informar a data desejada, o sistema já consulta automaticamente e injeta a informação acima. Use essa informação para:
+Quando disponibilidade for informada acima, use para:
 - Se esgotado: informar que não há mais vagas e sugerir outra data
 - Se área descoberta disponível: avisar que a reserva será na área descoberta e perguntar se aceita
 - Se coberto disponível: prosseguir normalmente
@@ -224,7 +213,7 @@ Não escalar. Não continuar o papo além disso.
 
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas? Não antecipar outras informações.
-2. Quando o cliente informar o dia, o sistema consulta a disponibilidade automaticamente
+2. Aguardar o cliente informar uma data específica (DD/MM ou "sábado dia X") antes de consultar disponibilidade
 3. Informar as regras do dia com base na disponibilidade — incluindo obrigatoriamente o horário limite
 4. Se esgotado: informar e sugerir outra data
 5. Se área descoberta: avisar e perguntar se aceita
@@ -343,6 +332,11 @@ async function isPaused(userId) {
   return !!val;
 }
 
+async function isGloballyPaused() {
+  const val = await redisGet("global:paused");
+  return !!val;
+}
+
 async function pauseConversation(userId) {
   await redisSet(`paused:${userId}`, "1", 10800);
   console.log(`Conversa com ${userId} pausada por 3 horas`);
@@ -393,6 +387,23 @@ async function notifyOwner(message) {
   }
 }
 
+async function handleTelegramCommand(text) {
+  const cmd = text.trim().toLowerCase();
+  if (cmd === "/pausar") {
+    await redisSet("global:paused", "1", 86400 * 7);
+    await notifyOwner("⏸ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
+  } else if (cmd === "/reativar") {
+    await redisDel("global:paused");
+    await notifyOwner("▶️ Bot reativado! Voltando a responder normalmente.");
+  } else if (cmd === "/status") {
+    const paused = await isGloballyPaused();
+    await notifyOwner(paused
+      ? "⏸ Bot está PAUSADO globalmente."
+      : "▶️ Bot está ATIVO e respondendo normalmente."
+    );
+  }
+}
+
 function extractReservation(text) {
   const match = text.match(/\[RESERVA:(.*?)\]/s);
   if (!match) return null;
@@ -423,41 +434,29 @@ function extractEscalation(text) {
   return obj;
 }
 
-function extractDates(text) {
-  const matches = text.match(/\d{1,2}\/\d{1,2}(?:\/\d{4})?/g) || [];
+// Só extrai datas explícitas no formato DD/MM ou DD/MM/AAAA com dia específico
+function extractExplicitDates(text) {
+  // Apenas datas com dia numérico explícito como "sábado dia 12", "12/04", "12 de abril"
+  const ddmm = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g) || [];
   const now = new Date();
   const year = now.getFullYear();
-  return matches.map(d => {
+  const results = ddmm.map(d => {
     const parts = d.split("/");
     if (parts.length === 2) return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${year}`;
     return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${parts[2]}`;
   });
-}
 
-function extractDayMentions(text) {
-  const now = new Date();
-  now.setHours(0,0,0,0);
-  const diasNomes = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
-  const diasRegex = /\b(essa|este|próxima?|proxima?)?\s*(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\b/gi;
-  const found = [];
+  // Detectar "dia X" combinado com dia da semana
+  const diaNumRegex = /\b(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\s+dia\s+(\d{1,2})\b/gi;
   let match;
-  while ((match = diasRegex.exec(text)) !== null) {
-    const nomeDia = match[2].toLowerCase()
-      .replace("sabado","sábado")
-      .replace("terca","terça");
-    const targetDay = diasNomes.indexOf(nomeDia);
-    if (targetDay === -1) continue;
-    const currentDay = now.getDay();
-    let diff = targetDay - currentDay;
-    if (diff <= 0) diff += 7;
-    const target = new Date(now);
-    target.setDate(now.getDate() + diff);
-    const dd = String(target.getDate()).padStart(2,"0");
-    const mm = String(target.getMonth()+1).padStart(2,"0");
-    const yyyy = target.getFullYear();
-    found.push(`${dd}/${mm}/${yyyy}`);
+  while ((match = diaNumRegex.exec(text)) !== null) {
+    const diaNum = parseInt(match[2]);
+    const mesAtual = now.getMonth() + 1;
+    const anoAtual = now.getFullYear();
+    results.push(`${String(diaNum).padStart(2,"0")}/${String(mesAtual).padStart(2,"0")}/${anoAtual}`);
   }
-  return found;
+
+  return [...new Set(results)];
 }
 
 async function sendInstagramMessage(userId, text) {
@@ -487,6 +486,11 @@ async function processMessages(userId, myToken) {
     return;
   }
 
+  if (await isGloballyPaused()) {
+    console.log(`Bot pausado globalmente — ignorando mensagem de ${userId}`);
+    return;
+  }
+
   let paused = await isPaused(userId);
   if (paused) {
     console.log(`Conversa com ${userId} pausada — ignorando`);
@@ -505,12 +509,10 @@ async function processMessages(userId, myToken) {
   const combinedMessage = pendingMessages.join("\n");
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
-  const datesFromText = extractDates(combinedMessage);
-  const datesFromDays = extractDayMentions(combinedMessage);
-  const allDates = [...new Set([...datesFromText, ...datesFromDays])];
-
+  // Só consulta disponibilidade se o cliente informou data explícita
+  const explicitDates = extractExplicitDates(combinedMessage);
   let disponibilidadeInfo = "";
-  for (const data of allDates) {
+  for (const data of explicitDates) {
     const disp = await verificarDisponibilidade(data);
     console.log(`Disponibilidade para ${data}:`, disp);
     if (disp.tipo === "esgotado") {
@@ -544,7 +546,7 @@ async function processMessages(userId, myToken) {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-5-20251001",
         max_tokens: 1024,
         system: getSystemPrompt(disponibilidadeInfo || null),
         messages: history
@@ -618,6 +620,22 @@ app.get("/", (req, res) => {
   return res.status(403).send("Erro de verificação");
 });
 
+// Webhook do Telegram para comandos
+app.post("/telegram", async (req, res) => {
+  res.sendStatus(200);
+  try {
+    const message = req.body?.message;
+    if (!message) return;
+    const chatId = message.chat?.id?.toString();
+    const text = message.text || "";
+    if (chatId === TELEGRAM_CHAT_ID && text.startsWith("/")) {
+      await handleTelegramCommand(text);
+    }
+  } catch (err) {
+    console.error("Erro no webhook Telegram:", err);
+  }
+});
+
 app.post("/", async (req, res) => {
   res.sendStatus(200);
 
@@ -641,6 +659,11 @@ app.post("/", async (req, res) => {
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;
+
+    if (await isGloballyPaused()) {
+      console.log(`Bot pausado globalmente — ignorando mensagem de ${senderId}`);
+      return;
+    }
 
     const paused = await isPaused(senderId);
     if (paused) {
@@ -673,4 +696,5 @@ app.post("/", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+  notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});
 });

@@ -151,7 +151,16 @@ async function redisGet(key) {
       headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
     });
     const data = await res.json();
-    return data.result || null;
+    if (!data.result) return null;
+    try {
+      const parsed = JSON.parse(data.result);
+      if (parsed && typeof parsed === "object" && parsed.value !== undefined) {
+        return parsed.value;
+      }
+    } catch {
+      // not JSON, return as-is
+    }
+    return data.result;
   } catch {
     return null;
   }
@@ -159,13 +168,14 @@ async function redisGet(key) {
 
 async function redisSet(key, value, ex = 300) {
   try {
+    const body = { value: typeof value === "string" ? value : JSON.stringify(value), ex };
     await fetch(`${UPSTASH_URL}/set/${key}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${UPSTASH_TOKEN}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ value: typeof value === "string" ? value : JSON.stringify(value), ex })
+      body: JSON.stringify(body)
     });
   } catch (err) {
     console.error(`Erro redis set ${key}:`, err);

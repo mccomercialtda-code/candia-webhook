@@ -9,18 +9,20 @@ const IG_TOKEN = process.env.IG_TOKEN;
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const SHEETS_URL = process.env.SHEETS_URL;
-const ZAPI_INSTANCE = process.env.ZAPI_INSTANCE;
-const ZAPI_TOKEN = process.env.ZAPI_TOKEN;
-const OWNER_PHONE = process.env.OWNER_PHONE;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
 const DEBOUNCE_MS = 90000;
 
 const SYSTEM_PROMPT = `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Seu papel é atender clientes pelo Instagram Direct, respondendo dúvidas e conduzindo reservas de forma acolhedora e descontraída.
 
-Responda sempre em português, com tom simpático e informal. Use emojis com moderação. Fale em primeira pessoa do plural (seguramos, aguardamos, conseguimos). Nunca invente informações que não estão neste prompt. Se não souber responder algo, diga que vai verificar e que em breve retornam.
+Responda sempre em português, com tom simpático e informal. Use emojis com moderação. Fale em primeira pessoa do plural (seguramos, aguardamos, conseguimos). Nunca invente informações que não estão neste prompt. Se não souber responder algo, diga que vai verificar e que em breve retornamos.
 
 FORMATAÇÃO
 Não use markdown, asteriscos, negrito, itálico ou qualquer formatação especial. O Instagram não suporta essas formatações. Escreva em texto simples corrido.
+
+TERMINOLOGIA
+Nunca diga "falar com o dono" ou "consultar o dono". Sempre use "vou verificar" ou "em breve retornamos".
 
 FUNCIONAMENTO
 Não abrimos às segundas-feiras.
@@ -30,10 +32,12 @@ Sábado: 12h às 00h
 Domingo: 12h às 21h
 
 MÚSICA AO VIVO
-Terça a sexta: 19h
-Sábado: 1ª atração às 15h, 2ª atração às 18h30
-Domingo: 15h
-Para saber quem toca: indicar os destaques do Instagram, tópico "agenda".
+Sexta, sábado e domingo: roda de samba ao vivo
+Terça a quinta: programação variada — indicar os destaques do Instagram, tópico "agenda", para confirmar
+Horários:
+- Terça a sexta: 19h
+- Sábado: 1ª atração às 15h, 2ª atração às 18h30
+- Domingo: 15h
 
 COUVERT ARTÍSTICO
 Terça a quinta: R$12 por pessoa
@@ -43,6 +47,7 @@ Só mencionar o couvert se o cliente perguntar diretamente sobre ele.
 
 REGRAS DE RESERVA POR DIA
 Reserva é opcional — garante o lugar. Sem reserva, atendimento por ordem de chegada.
+Fazemos apenas UMA mesa por reserva. Não é possível reservar duas mesas.
 Grupos maiores que o limite podem vir, mas o excedente fica em pé.
 
 Terça e quarta:
@@ -65,11 +70,17 @@ Sábado:
 - Não mencionar área coberta ou descoberta
 - Sempre perguntar: "Podemos seguir com a reserva nesse formato?"
 - Se o cliente pedir mais de 8 lugares: dizer que garantimos os 8 e que, à medida que a turma chegar, se possível colocamos mais cadeiras. Não escalar esse caso.
+- Se o cliente pedir duas mesas: explicar que fazemos apenas uma mesa por reserva, mas que à medida que a turma chegar podemos colocar mais cadeiras se houver disponibilidade.
 
 Domingo:
 - Até 15 lugares sentados
 - Segurar até 14h
 - Música ao vivo das 15h às 18h
+
+PREFERÊNCIA DE LOCAL
+Se o cliente mencionar preferência de local (fundos, varanda, calçada, salão interno, corredor), responder:
+"Não conseguimos confirmar o local exato da reserva com antecedência — a gente monta as mesas no dia conforme o movimento e as reservas. Mas vamos registrar sua preferência e faremos o possível pra acomodar vocês lá."
+Registrar a preferência no campo observacao do marcador [RESERVA].
 
 LIMITES DE RESERVA POR DIA
 Sexta: máximo 10 reservas
@@ -92,7 +103,6 @@ Sábado (qualquer horário):
 Terça a sexta até 17h:
 - Verificar disponibilidade normalmente
 - Se disponível, confirmar a reserva e incluir [ESCALAR: motivo=Reserva para hoje — confirmar com equipe]
-- O dono será notificado pelo WhatsApp para acionar a equipe
 
 Terça a sexta após 17h:
 - Informar que para hoje as mesas são por ordem de chegada
@@ -101,14 +111,13 @@ Terça a sexta após 17h:
 Domingo até 12h:
 - Verificar disponibilidade normalmente
 - Se disponível, confirmar a reserva e incluir [ESCALAR: motivo=Reserva para hoje domingo — confirmar com equipe]
-- O dono será notificado pelo WhatsApp para acionar a equipe
 
 Domingo após 12h:
 - Informar que para hoje as mesas são por ordem de chegada
 - Convidar a visitar mesmo assim
 
 FERIADOS 2026 — ESCALAR SEMPRE
-Se o cliente pedir reserva para as datas abaixo ou para a véspera delas, responder que vai verificar a disponibilidade e acionar o dono:
+Se o cliente pedir reserva para as datas abaixo ou para a véspera delas, responder que vai verificar a disponibilidade e em breve retornamos:
 - 30/04 (véspera) e 01/05 — Dia do Trabalho (quinta)
 - 10/06 (véspera) e 11/06 — Corpus Christi (quinta)
 - 14/11 (véspera) e 15/11 — Proclamação da República (domingo)
@@ -126,11 +135,16 @@ FLUXO DE RESERVA
 3. Se grupo maior que o limite: informar o limite e dizer que tenta acomodar mais na hora se possível
 4. Perguntar: "Podemos seguir com a reserva nesse formato?"
 5. Se sim: perguntar nome do aniversariante e contato
-6. Confirmar a reserva e pedir aviso em caso de imprevisto
-7. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
-[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N]
+6. Se mencionar preferência de local: registrar na observação
+7. Confirmar a reserva e pedir aviso em caso de imprevisto
+8. Quando confirmar a reserva, incluir no final da resposta exatamente neste formato:
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N, observacao=PREFERENCIA_LOCAL_OU_VAZIO]
 
-CASOS QUE PRECISAM DE INTERVENÇÃO HUMANA
+MENSAGENS DE MÍDIA (áudio, foto, vídeo, sticker)
+Se o cliente enviar qualquer tipo de mídia sem texto, responder:
+"Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
+
+CASOS QUE PRECISAM DE INTERVENÇÃO
 Quando identificar qualquer um dos casos abaixo, responda normalmente ao cliente E inclua ao final da resposta:
 [ESCALAR: motivo=DESCRICAO_BREVE]
 
@@ -141,11 +155,11 @@ Casos para escalar:
 - Cliente demonstra insatisfação ou reclamação
 - Pergunta que você genuinamente não sabe responder
 
-Nesses casos responda ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos!"
+Nesses casos responder ao cliente: "Deixa eu verificar essa informação pra vocês — em breve retornamos!"
 
 PERGUNTAS FREQUENTES
 Cardápio: disponível nos destaques do Instagram.
-Programação / tem samba?: ver destaques, tópico "agenda".
+Programação / tem samba?: sexta, sábado e domingo têm roda de samba. Terça a quinta a programação varia — ver destaques, tópico "agenda".
 Espaço kids: não temos.
 Posso trazer bolo?: sim, sem garantia de geladeira. Sem talheres/pratos, só guardanapos.
 Local do palco/mesa: não é fixo, definido no dia.
@@ -153,11 +167,10 @@ Preciso mandar nomes?: não. Comanda individual.
 Reservas esgotadas: área descoberta por ordem de chegada. Sugerir outra data ou @angubardeestufa (sábados).
 
 TOM E EXEMPLOS DE MENSAGEM
-Use um tom próximo a estes exemplos reais do bar:
 - "Aos sábados conseguimos reservar apenas uma mesa de apoio com até 8 lugares sentados — para garantir mais espaço pra galera circular, dançar e curtir muito o samba. Se a turma for maior, não tem problema! Pode vir todo mundo, que aqui é igual coração de mãe."
 - "Confirmamos a reserva e te aguardamos aqui. Se houver algum imprevisto e você não puder comparecer, nos avisa por favor?"
-- "O valor do couvert vai integralmente pros músicos — essa é nossa forma de contribuir com a comunidade musical de BH."
 - "A gente consegue garantir os 8 lugares sentados e, à medida que sua turma chegar, se precisar de mais cadeiras e ainda tivermos disponibilidade, colocamos mais pra vocês."
+- "Não conseguimos confirmar o local exato da reserva com antecedência, mas vamos registrar sua preferência e faremos o possível."
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
@@ -284,14 +297,17 @@ async function saveToSheets(data) {
 
 async function notifyOwner(message) {
   try {
-    await fetch(`https://api.z-api.io/instances/${ZAPI_INSTANCE}/token/${ZAPI_TOKEN}/send-text`, {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phone: OWNER_PHONE, message })
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message
+      })
     });
-    console.log("Dono notificado no WhatsApp!");
+    console.log("Dono notificado no Telegram!");
   } catch (err) {
-    console.error("Erro ao notificar dono:", err);
+    console.error("Erro ao notificar no Telegram:", err);
   }
 }
 
@@ -300,8 +316,12 @@ function extractReservation(text) {
   if (!match) return null;
   const obj = {};
   match[1].split(",").forEach(p => {
-    const [k, v] = p.split("=");
-    if (k && v) obj[k.trim()] = v.trim();
+    const idx = p.indexOf("=");
+    if (idx > 0) {
+      const k = p.substring(0, idx).trim();
+      const v = p.substring(idx + 1).trim();
+      if (k && v) obj[k] = v;
+    }
   });
   return obj;
 }
@@ -311,10 +331,30 @@ function extractEscalation(text) {
   if (!match) return null;
   const obj = {};
   match[1].split(",").forEach(p => {
-    const [k, v] = p.split("=");
-    if (k && v) obj[k.trim()] = v.trim();
+    const idx = p.indexOf("=");
+    if (idx > 0) {
+      const k = p.substring(0, idx).trim();
+      const v = p.substring(idx + 1).trim();
+      if (k && v) obj[k] = v;
+    }
   });
   return obj;
+}
+
+async function sendInstagramMessage(userId, text) {
+  const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "Authorization": `Bearer ${IG_TOKEN}`
+    },
+    body: JSON.stringify({
+      recipient: { id: userId },
+      message: { text }
+    })
+  });
+  const igData = await igRes.json();
+  console.log("Resposta Graph API:", JSON.stringify(igData));
 }
 
 async function processMessages(userId, myToken) {
@@ -382,36 +422,29 @@ async function processMessages(userId, myToken) {
   if (reservation) {
     await saveToSheets(reservation);
     await notifyOwner(
-      `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}`
+      `Nova reserva confirmada!\nData: ${reservation.data} (${reservation.dia})\nAniversariante: ${reservation.aniversariante}\nLugares: ${reservation.lugares}\nTotal esperado: ${reservation.total_esperado}\nContato: ${reservation.contato}${reservation.observacao ? "\nObservacao: " + reservation.observacao : ""}`
     );
   }
 
   const escalation = extractEscalation(reply);
   if (escalation) {
     await notifyOwner(
-      `Atencao — cliente precisa de atendimento humano!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
+      `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
     );
   }
 
   const cleanReply = reply
-    .replace(/\[RESERVA:.*?\]/g, "")
-    .replace(/\[ESCALAR:.*?\]/g, "")
+    .replace(/\[RESERVA:.*?\]/gs, "")
+    .replace(/\[ESCALAR:.*?\]/gs, "")
     .trim();
 
-  const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "Authorization": `Bearer ${IG_TOKEN}`
-    },
-    body: JSON.stringify({
-      recipient: { id: userId },
-      message: { text: cleanReply }
-    })
-  });
+  const stillPaused = await isPaused(userId);
+  if (stillPaused) {
+    console.log(`Conversa com ${userId} foi pausada durante o processamento — cancelando envio`);
+    return;
+  }
 
-  const igData = await igRes.json();
-  console.log("Resposta Graph API:", JSON.stringify(igData));
+  await sendInstagramMessage(userId, cleanReply);
 }
 
 app.get("/", (req, res) => {
@@ -446,16 +479,24 @@ app.post("/", async (req, res) => {
       return;
     }
 
-    const message = messaging?.message?.text;
     const senderId = messaging?.sender?.id;
-
-    if (!message || !senderId) return;
+    if (!senderId) return;
 
     const paused = await isPaused(senderId);
     if (paused) {
       console.log(`Conversa com ${senderId} pausada — ignorando`);
       return;
     }
+
+    const message = messaging?.message?.text;
+    const hasMedia = messaging?.message?.attachments || messaging?.message?.sticker_id;
+
+    if (!message && hasMedia) {
+      await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
+      return;
+    }
+
+    if (!message) return;
 
     await addPendingMessage(senderId, message);
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);

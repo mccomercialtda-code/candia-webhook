@@ -28,6 +28,12 @@ function getDiaSemana(dataStr) {
   return dias[d.getDay()];
 }
 
+function convertDateToISO(dateStr) {
+  // converte DD/MM/AAAA para AAAA-MM-DD
+  const [dia, mes, ano] = dateStr.split("/");
+  return `${ano}-${mes.padStart(2,"0")}-${dia.padStart(2,"0")}`;
+}
+
 async function contarReservasNotion(dataStr) {
   try {
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
@@ -40,7 +46,7 @@ async function contarReservasNotion(dataStr) {
       body: JSON.stringify({
         filter: {
           property: "Data",
-          rich_text: { equals: dataStr }
+          date: { equals: convertDateToISO(dataStr) }
         }
       })
     });
@@ -77,7 +83,7 @@ async function salvarReservaNaNotion(data) {
         parent: { database_id: NOTION_DB_ID },
         properties: {
           "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
-          "Data": { rich_text: [{ text: { content: data.data || "" } }] },
+          "Data": { date: { start: convertDateToISO(data.data) } },
           "Dia": { rich_text: [{ text: { content: data.dia || "" } }] },
           "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
           "Lugares": { number: parseInt(data.lugares) || 0 },

@@ -70,6 +70,13 @@ async function verificarDisponibilidade(dataStr) {
   return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto: limite.coberto - count, diaSemana };
 }
 
+function formatDiaNotion(dia, data) {
+  if (!dia || !data) return dia || "";
+  const parts = data.split("/");
+  if (parts.length < 2) return dia;
+  return `${dia} - ${parts[0]}/${parts[1]}`;
+}
+
 async function salvarReservaNaNotion(data) {
   try {
     const res = await fetch("https://api.notion.com/v1/pages", {
@@ -84,7 +91,7 @@ async function salvarReservaNaNotion(data) {
         properties: {
           "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
           "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
-          "Dia": { rich_text: [{ text: { content: data.dia || "" } }] },
+          "Dia": { rich_text: [{ text: { content: formatDiaNotion(data.dia, data.data) } }] },
           "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
           "Lugares": { number: parseInt(data.lugares) || 0 },
           "Total esperado": { number: parseInt(data.total_esperado) || 0 },

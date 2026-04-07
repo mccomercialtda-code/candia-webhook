@@ -802,19 +802,25 @@ async function handleTelegramCommand(text) {
   const raw = text.trim();
   const cmd = raw.toLowerCase();
 
-  // /Ex DD/MM → força área externa
-if (cmd === "/ex") {
-  const dataISO = parseDateFromCommand(raw.slice(3));
-  if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04"); return; }
+ // /Ex DD/MM → força área externa
+if (raw.toLowerCase().startsWith("/ex ")) {
+  const dataISO = parseDateFromCommand(raw.slice(4).trim());
+  if (!dataISO) {
+    await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04");
+    return;
+  }
   await setOverride(dataISO, "ext");
   await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
   return;
 }
 
 // /E DD/MM → força esgotado
-if (cmd === "/e") {
-  const dataISO = parseDateFromCommand(raw.slice(2));
-  if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /E 11/04"); return; }
+if (raw.toLowerCase().startsWith("/e ")) {
+  const dataISO = parseDateFromCommand(raw.slice(3).trim());
+  if (!dataISO) {
+    await notifyOwner("⚠️ Data inválida. Use: /E 11/04");
+    return;
+  }
   await setOverride(dataISO, "esg");
   await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
   return;

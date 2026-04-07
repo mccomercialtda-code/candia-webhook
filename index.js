@@ -687,14 +687,17 @@ async function redisGet(key) {
 
 async function redisSet(key, value, ex = 300) {
   try {
-    const body = { value: typeof value === "string" ? value : JSON.stringify(value), ex };
-    await fetch(`${UPSTASH_URL}/set/${key}`, {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+
+    const url = ex
+      ? `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}?EX=${ex}`
+      : `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`;
+
+    await fetch(url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${UPSTASH_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
+        Authorization: `Bearer ${UPSTASH_TOKEN}`
+      }
     });
   } catch (err) {
     console.error(`Erro redis set ${key}:`, err);

@@ -46,7 +46,7 @@ async function contarReservasNotion(dataStr) {
       body: JSON.stringify({
         filter: {
           property: "Data",
-          date: { equals: convertDateToISO(dataStr) }
+          rich_text: { equals: convertDateToISO(dataStr) }
         }
       })
     });
@@ -83,7 +83,7 @@ async function salvarReservaNaNotion(data) {
         parent: { database_id: NOTION_DB_ID },
         properties: {
           "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
-          "Data": { date: { start: convertDateToISO(data.data) } },
+          "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
           "Dia": { rich_text: [{ text: { content: data.dia || "" } }] },
           "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
           "Lugares": { number: parseInt(data.lugares) || 0 },

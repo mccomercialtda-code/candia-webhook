@@ -14,6 +14,8 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
 const DEBOUNCE_MS = 300000; // 5 minutos
+const PAUSA_INTERVENCAO_MS = 18000; // 5 horas em segundos
+const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
 const BOT_HORA_INICIO = 9;
@@ -33,6 +35,20 @@ function isHorarioComercial() {
   return hora >= BOT_HORA_INICIO && hora < BOT_HORA_FIM;
 }
 
+function getHoraBrasilia() {
+  const now = new Date();
+  return parseInt(now.toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo", hour: "2-digit", hour12: false
+  }));
+}
+
+function getMinutoBrasilia() {
+  const now = new Date();
+  return parseInt(now.toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo", minute: "2-digit"
+  }));
+}
+
 function getDiaSemana(dataStr) {
   const [dia, mes, ano] = dataStr.split("/");
   const d = new Date(`${ano}-${mes}-${dia}`);
@@ -50,6 +66,24 @@ function formatDiaNotion(dia, data) {
   const parts = data.split("/");
   if (parts.length < 2) return dia;
   return `${dia} - ${parts[0]}/${parts[1]}`;
+}
+
+function getTodayISO() {
+  const now = new Date();
+  return now.toLocaleDateString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit"
+  }).split("/").reverse().join("-");
+}
+
+function getDatePlusDaysISO(days) {
+  const now = new Date();
+  const brt = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  brt.setDate(brt.getDate() + days);
+  const y = brt.getFullYear();
+  const m = String(brt.getMonth() + 1).padStart(2, "0");
+  const d = String(brt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 async function contarReservasNotion(dataStr) {
@@ -88,7 +122,7 @@ async function verificarDisponibilidade(dataStr) {
   return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto: limite.coberto - count, diaSemana };
 }
 
-async function salvarReservaNaNotion(data) {
+async function salvarReservaNaNotion(data, instagramId) {
   try {
     const res = await fetch("https://api.notion.com/v1/pages", {
       method: "POST",
@@ -106,7 +140,9 @@ async function salvarReservaNaNotion(data) {
           "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
           "Lugares": { number: parseInt(data.lugares) || 0 },
           "Total esperado": { number: parseInt(data.total_esperado) || 0 },
-          "Observações": { rich_text: [{ text: { content: data.observacao || "" } }] }
+          "Observações": { rich_text: [{ text: { content: data.observacao || "" } }] },
+          "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] },
+          "Confirmado": { select: { name: "⏳ Pendente" } }
         }
       })
     });
@@ -121,13 +157,38 @@ async function salvarReservaNaNotion(data) {
   }
 }
 
+async function buscarReservasPorData(dataISO) {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: {
+          property: "Data",
+          rich_text: { equals: dataISO }
+        }
+      })
+    });
+    const data = await res.json();
+    return data.results || [];
+  } catch (err) {
+    console.error("Erro ao buscar reservas:", err);
+    return [];
+  }
+}
+
+async function buscarReservasGravatasHoje() {
+  // Busca pelo campo Data igual a hoje
+  return await buscarReservasPorData(getTodayISO());
+}
+
 async function limparReservasAntigas() {
   try {
-    const hoje = new Date().toLocaleDateString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric", month: "2-digit", day: "2-digit"
-    }).split("/").reverse().join("-");
-
+    const hoje = getTodayISO();
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
       method: "POST",
       headers: {
@@ -163,6 +224,82 @@ async function limparReservasAntigas() {
   }
 }
 
+// Envia lembretes 2 dias antes para todas as reservas do dia
+async function enviarLembretes2Dias() {
+  const targetDate = getDatePlusDaysISO(2);
+  console.log(`Enviando lembretes para reservas de ${targetDate}...`);
+  const reservas = await buscarReservasPorData(targetDate);
+
+  if (reservas.length === 0) {
+    console.log("Nenhuma reserva encontrada para daqui 2 dias.");
+    return;
+  }
+
+  let falhas = [];
+  for (const reserva of reservas) {
+    const nome = reserva.properties?.Nome?.title?.[0]?.text?.content || "cliente";
+    const igId = reserva.properties?.["Instagram ID"]?.rich_text?.[0]?.text?.content || "";
+    const contato = reserva.properties?.Contato?.rich_text?.[0]?.text?.content || "";
+    const dataReserva = reserva.properties?.Data?.rich_text?.[0]?.text?.content || "";
+    const dia = reserva.properties?.Dia?.rich_text?.[0]?.text?.content || "";
+
+    if (!igId) {
+      falhas.push(`${nome} (sem Instagram ID — contato: ${contato})`);
+      continue;
+    }
+
+    try {
+      const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Authorization": `Bearer ${IG_TOKEN}`
+        },
+        body: JSON.stringify({
+          recipient: { id: igId },
+          message: { text: `Oi, ${nome.split(" ")[0]}! 😊 Passando pra confirmar sua reserva no Candiá no dia ${dia}. Tudo certo pra comemorar com a gente? 🎉` }
+        })
+      });
+      const igData = await igRes.json();
+      if (igData.error) {
+        falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
+      } else {
+        console.log(`Lembrete enviado para ${nome} (${igId})`);
+      }
+    } catch (err) {
+      falhas.push(`${nome} (erro de rede — contato: ${contato})`);
+    }
+  }
+
+  if (falhas.length > 0) {
+    await notifyOwner(`⚠️ Lembretes não enviados (${falhas.length}):\n${falhas.map(f => `• ${f}`).join("\n")}\nEntre em contato manualmente.`);
+  } else {
+    await notifyOwner(`✅ Lembretes enviados para ${reservas.length} reserva(s) do dia ${targetDate}.`);
+  }
+}
+
+// Resumo diário às 22h01
+async function enviarResumoDiario() {
+  console.log("Enviando resumo diário...");
+  const reservas = await buscarReservasGravatasHoje();
+
+  if (reservas.length === 0) {
+    await notifyOwner("📋 Resumo do dia: nenhuma reserva gravada hoje.");
+    return;
+  }
+
+  const linhas = reservas.map(r => {
+    const nome = r.properties?.Nome?.title?.[0]?.text?.content || "—";
+    const dia = r.properties?.Dia?.rich_text?.[0]?.text?.content || "—";
+    const lugares = r.properties?.Lugares?.number || "—";
+    const total = r.properties?.["Total esperado"]?.number || "—";
+    const obs = r.properties?.Observações?.rich_text?.[0]?.text?.content || "";
+    return `• ${nome} | ${dia} | ${lugares} lugares | ${total} esperados${obs ? ` | ${obs}` : ""}`;
+  });
+
+  await notifyOwner(`📋 Reservas gravadas hoje (${getTodayISO()}):\n${linhas.join("\n")}`);
+}
+
 function agendarLimpezaSemanal() {
   function calcularProximaSegunda10h() {
     const now = new Date();
@@ -179,7 +316,6 @@ function agendarLimpezaSemanal() {
     const proximaSegunda = new Date(nowBrasilia);
     proximaSegunda.setDate(nowBrasilia.getDate() + diasAteSegunda);
     proximaSegunda.setHours(10, 0, 0, 0);
-
     return proximaSegunda.getTime() - nowBrasilia.getTime();
   }
 
@@ -194,6 +330,39 @@ function agendarLimpezaSemanal() {
   const ms = calcularProximaSegunda10h();
   console.log(`Limpeza automática agendada em ${Math.round(ms / 3600000)}h`);
   setTimeout(executarLimpeza, ms);
+}
+
+// Agenda rotinas diárias: lembretes às 9h e resumo às 22h01
+function agendarRotinasDiarias() {
+  function msAteHorario(hora, minuto = 0) {
+    const now = new Date();
+    const brt = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+    const target = new Date(brt);
+    target.setHours(hora, minuto, 0, 0);
+    if (target <= brt) target.setDate(target.getDate() + 1);
+    return target.getTime() - brt.getTime();
+  }
+
+  function agendarLembretes() {
+    const ms = msAteHorario(9, 0);
+    console.log(`Lembretes agendados em ${Math.round(ms / 3600000)}h`);
+    setTimeout(() => {
+      enviarLembretes2Dias().catch(err => console.error("Erro nos lembretes:", err));
+      setTimeout(agendarLembretes, 1000);
+    }, ms);
+  }
+
+  function agendarResumo() {
+    const ms = msAteHorario(22, 1);
+    console.log(`Resumo diário agendado em ${Math.round(ms / 3600000)}h`);
+    setTimeout(() => {
+      enviarResumoDiario().catch(err => console.error("Erro no resumo:", err));
+      setTimeout(agendarResumo, 1000);
+    }, ms);
+  }
+
+  agendarLembretes();
+  agendarResumo();
 }
 
 function getSystemPrompt(disponibilidade) {
@@ -220,7 +389,7 @@ IDENTIDADE E TOM
 - Primeira pessoa do plural: "a gente", "conseguimos", "seguramos", "aguardamos"
 - Emojis com moderação
 - Texto simples, sem markdown, asteriscos, negrito ou itálico — o Instagram não suporta
-- Nunca mencionar "dono", "proprietário" ou pessoa específica. Sempre "a gente", "em breve retornamos", "vamos verificar"
+- Nunca mencionar "dono", "proprietário" ou pessoa específica, exceto o gerente João quando o cliente disser que vai pessoalmente
 - Atendemos apenas pelo Instagram ou pessoalmente. Não temos atendimento por WhatsApp.
 
 REGRA GERAL
@@ -267,6 +436,7 @@ RESERVAS — REGRAS GERAIS
 - Só mencionar a possibilidade de mais cadeiras se o cliente pedir explicitamente mais lugares do que o limite
 - Sempre informar o horário limite da reserva ao apresentar as condições do dia
 - Após o horário limite: mesas por ordem de chegada, sem nenhuma garantia adicional
+- IMPORTANTE: nunca aceitar reserva com base apenas em "sábado", "essa sexta", "semana que vem" etc. Exigir data com número explícito (ex: "11/04", "11 de abril", "sábado dia 11"). Se o cliente disser só o dia da semana: perguntar "Qual a data certinha? (dia e mês)"
 
 RESERVAS — LIMITES POR DIA
 Terça e quarta: até 20 lugares | segurar até 19h | sem limite de reservas
@@ -278,10 +448,18 @@ Domingo: até 15 lugares | segurar até 14h | máximo 10 reservas
 SÁBADO — REGRAS ESPECIAIS
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - A reserva é segurada até 15h, com tolerância de 15 minutinhos — após isso não conseguimos manter
+- Se o cliente não puder chegar até 15h: "Pode vir à vontade! A casa sempre comporta todo mundo 😊" — não mencionar reserva nem dar entender que haverá lugar guardado
 - Não mencionar área coberta/descoberta a menos que a disponibilidade consultada indique área descoberta
-- Após 15h: mesas por ordem de chegada, sem garantia alguma. Se o cliente quiser chegar após 15h: sem reserva e sem garantia de geladeira para bolo
+- Após 15h: mesas por ordem de chegada, sem garantia alguma
 - Palco fica no salão interno. Aos sábados não há mesas no salão — a galera curte por lá em volta da música
 - Se pedir duas mesas: explicar que fazemos apenas uma mesa por reserva, sem escalar
+
+TERÇA A QUINTA — CHEGADA APÓS 19H
+Se o cliente pedir para chegar após 19h (terça a quinta): "Deixa eu verificar pra vocês — em breve retornamos!" + [ESCALAR: motivo=Cliente quer chegar após 19h em dia de semana — verificar disponibilidade]
+
+CLIENTE VAI PESSOALMENTE
+Se o cliente disser que vai ao bar conversar pessoalmente ou resolver pessoalmente:
+"Será um prazer receber vocês! Pode chegar e perguntar pelo João, nosso gerente 😊"
 
 DISPONIBILIDADE EM TEMPO REAL
 Quando disponibilidade for informada acima, use para:
@@ -319,7 +497,7 @@ Não escalar. Não continuar o papo além disso.
 
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas? Não antecipar outras informações.
-2. Aguardar o cliente informar uma data específica antes de consultar disponibilidade
+2. Aguardar o cliente informar uma data com número explícito (ex: "11/04", "11 de abril", "sábado dia 11"). Nunca prosseguir com só "sábado" ou "essa sexta" — perguntar a data certinha.
 3. Informar as regras do dia com base na disponibilidade — incluindo obrigatoriamente o horário limite
 4. Se esgotado: informar e sugerir outra data
 5. Se área descoberta: avisar que é área externa e perguntar se aceita
@@ -339,6 +517,7 @@ Incluir [ESCALAR: motivo=DESCRICAO] ao final e responder apenas "Deixa eu verifi
 - Reserva para hoje (nos horários aceitos)
 - Evento fechado ou orçamento personalizado
 - Insatisfação ou reclamação
+- Cliente quer chegar após 19h em dia de semana (ter a qui)
 - Pergunta fora do escopo
 
 MÍDIA (áudio, foto, vídeo, sticker)
@@ -369,6 +548,8 @@ EXEMPLOS DE TOM
 "Aos sábados conseguimos reservar apenas uma mesa de apoio com até 8 lugares sentados. A gente segura a reserva até as 15h, com tolerância de 15 minutinhos. Podemos seguir com a reserva nesse formato?"
 "Confirmamos a reserva e te aguardamos aqui 🎉 Se tiver algum imprevisto e não puder comparecer, nos avisa por favor?"
 "A banda e as mesas nem sempre ficam nos mesmos lugares — montamos no dia conforme a capacidade, número de reservas e antecedência dos pedidos. Mas vamos registrar sua preferência e tentamos colocar onde você sugeriu!"
+"Pode vir à vontade! A casa sempre comporta todo mundo 😊"
+"Será um prazer receber vocês! Pode chegar e perguntar pelo João, nosso gerente 😊"
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 }
@@ -453,8 +634,8 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  await redisSet(`paused:${userId}`, "1", 10800);
-  console.log(`Conversa com ${userId} pausada por 3 horas`);
+  await redisSet(`paused:${userId}`, "1", PAUSA_INTERVENCAO_MS);
+  console.log(`Conversa com ${userId} pausada por 5 horas`);
 }
 
 async function getPendingMessages(userId) {
@@ -484,6 +665,32 @@ async function getDebounceToken(userId) {
 
 async function setDebounceToken(userId, token) {
   await redisSet(`debounce:${userId}`, token, 600);
+}
+
+// Follow-up 6h após última resposta do bot sem retorno do cliente
+async function agendarFollowUp(userId) {
+  // Salva timestamp do follow-up agendado
+  await redisSet(`followup:${userId}`, Date.now().toString(), Math.ceil(FOLLOWUP_MS / 1000) + 600);
+  setTimeout(async () => {
+    try {
+      // Verifica se o cliente não respondeu (token de follow-up ainda existe e não foi cancelado)
+      const token = await redisGet(`followup:${userId}`);
+      if (!token) return;
+      const paused = await isPaused(userId);
+      if (paused) return;
+      if (await isGloballyPaused()) return;
+      if (!isHorarioComercial()) return;
+      await redisDel(`followup:${userId}`);
+      await sendInstagramMessage(userId, "Ficou alguma dúvida? Bora reservar? 😄");
+      console.log(`Follow-up enviado para ${userId}`);
+    } catch (err) {
+      console.error("Erro no follow-up:", err);
+    }
+  }, FOLLOWUP_MS);
+}
+
+async function cancelarFollowUp(userId) {
+  await redisDel(`followup:${userId}`);
 }
 
 async function notifyOwner(message) {
@@ -558,7 +765,6 @@ function extractEscalation(text) {
   return obj;
 }
 
-// Extrai datas explícitas de um texto — usado tanto na mensagem atual quanto no histórico
 function extractExplicitDates(text) {
   const ddmm = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g) || [];
   const now = new Date();
@@ -581,13 +787,22 @@ function extractExplicitDates(text) {
   return [...new Set(results)];
 }
 
-// Extrai datas de toda a conversa (mensagem atual + histórico)
 function extractDatesFromConversation(currentMessage, history) {
   const allText = [
     currentMessage,
     ...history.map(h => h.content || "")
   ].join("\n");
   return extractExplicitDates(allText);
+}
+
+// Detecta se a resposta do bot contém informações sobre reserva (para agendar follow-up)
+function respostaContemInfoReserva(text) {
+  const keywords = [
+    "reserva", "mesa", "lugares", "segurar", "15h", "19h", "14h",
+    "podemos seguir", "formato", "disponível", "disponibilidade"
+  ];
+  const lower = text.toLowerCase();
+  return keywords.some(k => lower.includes(k));
 }
 
 async function sendInstagramMessage(userId, text) {
@@ -645,7 +860,9 @@ async function processMessages(userId, myToken) {
   const combinedMessage = pendingMessages.join("\n");
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
-  // Busca histórico antes de extrair datas — considera toda a conversa
+  // Cancela follow-up pendente pois o cliente respondeu
+  await cancelarFollowUp(userId);
+
   const history = await getHistory(userId);
   const explicitDates = extractDatesFromConversation(combinedMessage, history);
 
@@ -728,7 +945,7 @@ async function processMessages(userId, myToken) {
 
   const reservation = extractReservation(reply);
   if (reservation) {
-    await salvarReservaNaNotion(reservation);
+    await salvarReservaNaNotion(reservation, userId);
   }
 
   const escalation = extractEscalation(reply);
@@ -744,9 +961,16 @@ async function processMessages(userId, myToken) {
     .trim();
 
   await sendInstagramMessage(userId, cleanReply);
+
+  // Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
+  const isConfirmacao = !!reservation;
+  const isEscalacao = !!escalation;
+  if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
+    await agendarFollowUp(userId);
+    console.log(`Follow-up agendado para ${userId} em 6h`);
+  }
 }
 
-// Processa fila acumulada ao entrar no horário comercial
 async function processarFilaAcumulada() {
   console.log("Verificando fila acumulada fora do horário...");
   try {
@@ -825,9 +1049,9 @@ app.post("/", async (req, res) => {
       const echoRecipient = messaging?.recipient?.id;
       if (echoRecipient && echoSender !== IG_ACCOUNT_ID) {
         await pauseConversation(echoRecipient);
-        // Invalida o token de debounce para cancelar qualquer processamento em andamento
         await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
-        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada e debounce cancelado`);
+        await cancelarFollowUp(echoRecipient);
+        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada por 5h e debounce cancelado`);
       }
       return;
     }
@@ -847,7 +1071,6 @@ app.post("/", async (req, res) => {
     }
 
     const message = messaging?.message?.text;
-    // Ignora mídia real (foto, vídeo, áudio) mas não attachments tipo "fallback" (ex: número de telefone detectado)
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       (messaging?.message?.attachments?.some(a => a.type !== "fallback"))
@@ -882,6 +1105,7 @@ app.post("/", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   agendarLimpezaSemanal();
+  agendarRotinasDiarias();
   agendarVerificacaoHorario();
   notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});
 });

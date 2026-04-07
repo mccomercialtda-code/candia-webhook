@@ -618,8 +618,44 @@ function isMensagemNova(text) {
     t.includes("abre") ||
     t.includes("tem")
   ) return true;
-
   return false;
+}
+function classificarIntervencaoHumana(text) {
+  if (!text) return "informou";
+
+  const t = text.toLowerCase().trim();
+
+  const sinaisEncerramento = [
+    "confirmamos a reserva",
+    "confirmamos sua reserva",
+    "reserva confirmada",
+    "te aguardamos aqui",
+    "te aguardamos",
+    "fechado",
+    "combinado",
+    "nos vemos",
+    "até lá",
+    "qualquer imprevisto nos avisa",
+    "qualquer imprevisto nos avise"
+  ];
+
+  for (const s of sinaisEncerramento) {
+    if (t.includes(s)) return "encerrou";
+  }
+
+  return "informou";
+}
+
+async function marcarIntervencaoHumana(userId, text) {
+  const tipo = classificarIntervencaoHumana(text);
+
+  if (tipo === "encerrou") {
+    await redisSet(`humano_encerrou:${userId}`, "1", 86400 * 7);
+    await redisDel(`humano_informou:${userId}`);
+  } else {
+    await redisSet(`humano_informou:${userId}`, "1", 86400 * 2);
+    await redisDel(`humano_encerrou:${userId}`);
+  }
 }
 async function redisGet(key) {
   try {
@@ -742,19 +778,34 @@ async function setDebounceToken(userId, token) {
 
 // Follow-up 6h após última resposta do bot sem retorno do cliente
 async function agendarFollowUp(userId) {
-  // Salva timestamp do follow-up agendado
   await redisSet(`followup:${userId}`, Date.now().toString(), Math.ceil(FOLLOWUP_MS / 1000) + 600);
+
   setTimeout(async () => {
     try {
-      // Verifica se o cliente não respondeu (token de follow-up ainda existe e não foi cancelado)
       const token = await redisGet(`followup:${userId}`);
       if (!token) return;
+
       const paused = await isPaused(userId);
       if (paused) return;
       if (await isGloballyPaused()) return;
       if (!isHorarioComercial()) return;
+
+      // não manda follow-up se reserva já foi confirmada
+      if (await redisGet(`reserva_confirmada:${userId}`)) return;
+
+      // humano encerrou a conversa/reserva → não manda follow-up
+      if (await redisGet(`humano_encerrou:${userId}`)) return;
+
       await redisDel(`followup:${userId}`);
-      await sendInstagramMessage(userId, "Ficou alguma dúvida? Bora reservar? 😄");
+
+      let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
+
+      // se humano só informou condições, manda follow-up ainda mais leve
+      if (await redisGet(`humano_informou:${userId}`)) {
+        mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
+      }
+
+      await sendInstagramMessage(userId, mensagem);
       console.log(`Follow-up enviado para ${userId}`);
     } catch (err) {
       console.error("Erro no follow-up:", err);
@@ -1221,20 +1272,24 @@ app.post("/", async (req, res) => {
       return;
     }
 
-    if (messaging?.message?.is_echo) {
-      const echoSender = messaging?.sender?.id;
-      const echoRecipient = messaging?.recipient?.id;
-      if (echoRecipient && echoSender !== IG_ACCOUNT_ID) {
-        await pauseConversation(echoRecipient);
-        await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
-        await cancelarFollowUp(echoRecipient);
-        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada por 5h e debounce cancelado`);
-        await clearPendingMessages(echoRecipient);
-await redisDel(`reserva_confirmada:${echoRecipient}`);
-        
-      }
-      return;
-    }
+ if (messaging?.message?.is_echo) {
+  const echoSender = messaging?.sender?.id;
+  const echoRecipient = messaging?.recipient?.id;
+  const echoText = messaging?.message?.text || "";
+
+  if (echoRecipient && echoSender !== IG_ACCOUNT_ID) {
+    await pauseConversation(echoRecipient);
+    await clearPendingMessages(echoRecipient);
+    await redisDel(`reserva_confirmada:${echoRecipient}`);
+    await marcarIntervencaoHumana(echoRecipient, echoText);
+    await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
+    await cancelarFollowUp(echoRecipient);
+
+    console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada, classificada e debounce cancelado`);
+  }
+
+  return;
+}
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;

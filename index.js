@@ -584,13 +584,43 @@ function sleep(ms) {
 }
 
 function isOnlyPhoneNumber(text) {
-  const t = text.trim();
-  // Remove prefixos comuns antes de checar
-  const cleaned = t.replace(/^(telefone|tel|fone|contato|cel|celular|whatsapp|wpp)\s*[:=\-]?\s*/i, "");
-  // Verifica se o que sobrou é só número de telefone (com 0 na frente, DDI, parênteses, hífen, ponto, espaço)
-  return /^[\+0]?[\d\s\(\)\-\.]{7,25}$/.test(cleaned);
-}
+  if (!text) return false;
 
+  const lower = text.toLowerCase();
+
+  if (
+    lower.includes("telefone") ||
+    lower.includes("contato") ||
+    lower.includes("whatsapp") ||
+    lower.includes("celular") ||
+    lower.includes("meu numero")
+  ) {
+    return true;
+  }
+
+  const cleaned = text.replace(/\D/g, "");
+  return cleaned.length >= 10 && cleaned.length <= 14;
+}
+function isMensagemNova(text) {
+  if (!text) return false;
+
+  const t = text.toLowerCase().trim();
+
+  if (/\d{1,2}\/\d{1,2}/.test(t)) return true;
+
+  if (t.includes("reserva") || t.includes("mesa")) return true;
+  if (t.includes("cancelar") || t.includes("alterar")) return true;
+
+  if (
+    t.includes("horario") ||
+    t.includes("horário") ||
+    t.includes("funciona") ||
+    t.includes("abre") ||
+    t.includes("tem")
+  ) return true;
+
+  return false;
+}
 async function redisGet(key) {
   try {
     const res = await fetch(`${UPSTASH_URL}/get/${key}`, {
@@ -772,23 +802,23 @@ async function handleTelegramCommand(text) {
   const raw = text.trim();
   const cmd = raw.toLowerCase();
 
-  // *DD/MM → força área externa
-  if (raw.startsWith("*") && !raw.startsWith("**")) {
-    const dataISO = parseDateFromCommand(raw.slice(1));
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: *11/04"); return; }
-    await setOverride(dataISO, "ext");
-    await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
-    return;
-  }
+  // /Ex DD/MM → força área externa
+if (cmd === "/ex") {
+  const dataISO = parseDateFromCommand(raw.slice(3));
+  if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04"); return; }
+  await setOverride(dataISO, "ext");
+  await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
+  return;
+}
 
-  // **DD/MM → força esgotado
-  if (raw.startsWith("**")) {
-    const dataISO = parseDateFromCommand(raw.slice(2));
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: **11/04"); return; }
-    await setOverride(dataISO, "esg");
-    await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
-    return;
-  }
+// /E DD/MM → força esgotado
+if (cmd === "/e") {
+  const dataISO = parseDateFromCommand(raw.slice(2));
+  if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /E 11/04"); return; }
+  await setOverride(dataISO, "esg");
+  await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
+  return;
+}
 
   if (cmd === "/pausar") {
     await redisSet("global:paused", "1", 86400 * 7);
@@ -835,11 +865,11 @@ async function handleTelegramCommand(text) {
     await notifyOwner(
 `📋 Comandos disponíveis:
 
-*DD/MM — Força área EXTERNA para uma data
-Ex: *11/04
+/Ex DD/MM — Força área EXTERNA para uma data
+Ex: /Ex 11/04
 
-**DD/MM — Força ESGOTADO para uma data
-Ex: **11/04
+/E DD/MM — Força ESGOTADO para uma data
+Ex: /E 11/04
 
 /limpar DD/MM — Remove override de uma data
 Ex: /limpar 11/04
@@ -1087,7 +1117,8 @@ async function processMessages(userId, myToken) {
   if (reservation) {
     await salvarReservaNaNotion(reservation, userId);
   }
-
+await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+await clearPendingMessages(userId);
   const escalation = extractEscalation(reply);
   if (escalation) {
     await notifyOwner(
@@ -1192,6 +1223,9 @@ app.post("/", async (req, res) => {
         await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
         await cancelarFollowUp(echoRecipient);
         console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada por 5h e debounce cancelado`);
+        await clearPendingMessages(echoRecipient);
+await redisDel(`reserva_confirmada:${echoRecipient}`);
+        
       }
       return;
     }
@@ -1211,6 +1245,12 @@ app.post("/", async (req, res) => {
     }
 
     const message = messaging?.message?.text;
+    if (await redisGet(`reserva_confirmada:${senderId}`)) {
+  if (!isMensagemNova(message)) {
+    console.log(`Mensagem ignorada (pós-reserva) de ${senderId}: ${message}`);
+    return;
+  }
+}
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       (messaging?.message?.attachments?.some(a => a.type !== "fallback"))
@@ -1242,9 +1282,14 @@ app.post("/", async (req, res) => {
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
     if (await isEncerrado(senderId)) {
-      await reabrirConversa(senderId);
-      console.log(`Conversa com ${senderId} reaberta — cliente enviou nova mensagem após pausa`);
-    }
+  if (!isMensagemNova(message)) {
+    console.log(`Mensagem ignorada (conversa encerrada) de ${senderId}: ${message}`);
+    return;
+  }
+
+  await reabrirConversa(senderId);
+  console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
+}
 
     if (!isHorarioComercial()) {
       console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);

@@ -112,6 +112,13 @@ async function contarReservasNotion(dataStr) {
 
 async function verificarDisponibilidade(dataStr) {
   const diaSemana = getDiaSemana(dataStr);
+  const dataISO = convertDateToISO(dataStr);
+
+  // Override manual tem prioridade sobre o Notion
+  const override = await getOverride(dataISO);
+  if (override === "esg") return { disponivel: false, tipo: "esgotado", override: true, diaSemana };
+  if (override === "ext") return { disponivel: true, tipo: "descoberto", override: true, vagasDescoberto: 1, diaSemana };
+
   const limite = LIMITES[diaSemana];
   if (!limite) return { disponivel: true, tipo: "ilimitado", diaSemana };
   const count = await contarReservasNotion(dataStr);
@@ -155,6 +162,22 @@ async function salvarReservaNaNotion(data, instagramId) {
   } catch (err) {
     console.error("Erro ao gravar reserva no Notion:", err);
   }
+}
+
+// Overrides manuais via Telegram
+async function setOverride(dataISO, tipo) {
+  // tipo: "ext" (apenas externa) ou "esg" (esgotado)
+  await redisSet(`override:${dataISO}`, tipo, 86400 * 7);
+  console.log(`Override ${tipo} setado para ${dataISO}`);
+}
+
+async function getOverride(dataISO) {
+  return await redisGet(`override:${dataISO}`);
+}
+
+async function clearOverride(dataISO) {
+  await redisDel(`override:${dataISO}`);
+  console.log(`Override removido para ${dataISO}`);
 }
 
 async function buscarReservasPorData(dataISO) {
@@ -463,7 +486,7 @@ Se o cliente disser que vai ao bar conversar pessoalmente ou resolver pessoalmen
 
 DISPONIBILIDADE EM TEMPO REAL
 Quando disponibilidade for informada acima, use para:
-- Se esgotado: informar que não há mais vagas e sugerir outra data
+- Se esgotado: usar exatamente este texto: "Infelizmente estamos com as reservas esgotadas para este dia 😑. As mesas ainda disponíveis ficam na área descoberta e são por ordem de chegada. Abrimos às 12h30.\nMas aqui é um bar onde a galera fica mais em pé, então é só chegar, mesmo sem reserva, que cabe todo mundo 🧡\nSe preferir, ainda temos disponibilidade de reserva aqui no Candiá na sexta ou no domingo, ou no sábado em nossa outra casa — o @angubardeestufa"
 - Se área descoberta disponível: avisar que a reserva será na área externa (descoberta) e perguntar se aceita
 - Se coberto disponível: prosseguir normalmente
 - Se sem limite (terça a quinta): prosseguir normalmente
@@ -560,6 +583,14 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function isOnlyPhoneNumber(text) {
+  const t = text.trim();
+  // Remove prefixos comuns antes de checar
+  const cleaned = t.replace(/^(telefone|tel|fone|contato|cel|celular|whatsapp|wpp)\s*[:=\-]?\s*/i, "");
+  // Verifica se o que sobrou é só número de telefone (com 0 na frente, DDI, parênteses, hífen, ponto, espaço)
+  return /^[\+0]?[\d\s\(\)\-\.]{7,25}$/.test(cleaned);
+}
+
 async function redisGet(key) {
   try {
     const res = await fetch(`${UPSTASH_URL}/get/${key}`, {
@@ -635,7 +666,19 @@ async function isGloballyPaused() {
 
 async function pauseConversation(userId) {
   await redisSet(`paused:${userId}`, "1", PAUSA_INTERVENCAO_MS);
-  console.log(`Conversa com ${userId} pausada por 5 horas`);
+  // Flag encerrado: persiste além da pausa — bot só volta se cliente mandar nova mensagem após 5h
+  await redisSet(`encerrado:${userId}`, "1", 86400 * 30); // 30 dias
+  console.log(`Conversa com ${userId} pausada por 5 horas e marcada como encerrada`);
+}
+
+async function isEncerrado(userId) {
+  const val = await redisGet(`encerrado:${userId}`);
+  return !!val;
+}
+
+async function reabrirConversa(userId) {
+  await redisDel(`encerrado:${userId}`);
+  console.log(`Conversa com ${userId} reaberta pelo cliente`);
 }
 
 async function getPendingMessages(userId) {
@@ -709,14 +752,52 @@ async function notifyOwner(message) {
   }
 }
 
+function parseDateFromCommand(text) {
+  // Extrai DD/MM ou DD/MM/AAAA do texto do comando
+  const match = text.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?/);
+  if (!match) return null;
+  const now = new Date();
+  const dia = match[1].padStart(2, "0");
+  const mes = match[2].padStart(2, "0");
+  const ano = match[3] || now.getFullYear().toString();
+  return `${ano}-${mes}-${dia}`; // ISO para o Redis
+}
+
+function formatDateBR(isoDate) {
+  const [ano, mes, dia] = isoDate.split("-");
+  return `${dia}/${mes}/${ano}`;
+}
+
 async function handleTelegramCommand(text) {
-  const cmd = text.trim().toLowerCase();
+  const raw = text.trim();
+  const cmd = raw.toLowerCase();
+
+  // *DD/MM → força área externa
+  if (raw.startsWith("*") && !raw.startsWith("**")) {
+    const dataISO = parseDateFromCommand(raw.slice(1));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: *11/04"); return; }
+    await setOverride(dataISO, "ext");
+    await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
+    return;
+  }
+
+  // **DD/MM → força esgotado
+  if (raw.startsWith("**")) {
+    const dataISO = parseDateFromCommand(raw.slice(2));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: **11/04"); return; }
+    await setOverride(dataISO, "esg");
+    await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
+    return;
+  }
+
   if (cmd === "/pausar") {
     await redisSet("global:paused", "1", 86400 * 7);
     await notifyOwner("⏸ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
+
   } else if (cmd === "/reativar") {
     await redisDel("global:paused");
     await notifyOwner("▶️ Bot reativado! Voltando a responder normalmente.");
+
   } else if (cmd === "/status") {
     const paused = await isGloballyPaused();
     const comercial = isHorarioComercial();
@@ -724,6 +805,13 @@ async function handleTelegramCommand(text) {
       ? "⏸ Bot está PAUSADO globalmente."
       : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}`
     );
+
+  } else if (cmd.startsWith("/limpar ")) {
+    const dataISO = parseDateFromCommand(cmd.slice(8));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04"); return; }
+    await clearOverride(dataISO);
+    await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
+
   } else if (cmd === "/limpar") {
     await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
     try {
@@ -732,6 +820,43 @@ async function handleTelegramCommand(text) {
     } catch (err) {
       await notifyOwner(`⚠️ Erro na limpeza: ${err.message}`);
     }
+
+  } else if (cmd.startsWith("/status ")) {
+    const dataISO = parseDateFromCommand(cmd.slice(8));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /status 11/04"); return; }
+    const override = await getOverride(dataISO);
+    const disp = await verificarDisponibilidade(formatDateBR(dataISO).replace(/\/(\d{4})$/, "").split("/").map((v,i) => i===2?v:v).join("/") + "/" + dataISO.split("-")[0]);
+    let msg = `📅 Status ${formatDateBR(dataISO)}:\n`;
+    if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
+    msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
+    await notifyOwner(msg);
+
+  } else if (cmd === "/help") {
+    await notifyOwner(
+`📋 Comandos disponíveis:
+
+*DD/MM — Força área EXTERNA para uma data
+Ex: *11/04
+
+**DD/MM — Força ESGOTADO para uma data
+Ex: **11/04
+
+/limpar DD/MM — Remove override de uma data
+Ex: /limpar 11/04
+
+/limpar — Apaga reservas antigas do Notion
+
+/status DD/MM — Mostra disponibilidade de uma data
+Ex: /status 11/04
+
+/status — Mostra se o bot está ativo ou pausado
+
+/pausar — Pausa o bot globalmente
+
+/reativar — Reativa o bot
+
+/help — Mostra esta lista`
+    );
   }
 }
 
@@ -845,6 +970,13 @@ async function processMessages(userId, myToken) {
   let paused = await isPaused(userId);
   if (paused) {
     console.log(`Conversa com ${userId} pausada — ignorando`);
+    await clearPendingMessages(userId);
+    return;
+  }
+
+  // Se ainda está marcada como encerrada (não foi reaberta pelo cliente), não responde
+  if (await isEncerrado(userId)) {
+    console.log(`Conversa com ${userId} encerrada por humano — aguardando nova mensagem do cliente`);
     await clearPendingMessages(userId);
     return;
   }
@@ -1093,8 +1225,26 @@ app.post("/", async (req, res) => {
 
     if (!message) return;
 
+    // Ignora mensagens que são apenas números de telefone (detectados pelo Instagram)
+    if (isOnlyPhoneNumber(message)) {
+      console.log(`Mensagem de ${senderId} ignorada — apenas número de telefone: ${message}`);
+      return;
+    }
+
     await addPendingMessage(senderId, message);
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
+
+    // Se conversa foi encerrada por humano e pausa ainda ativa: só enfileira, não processa
+    if (await isPaused(senderId)) {
+      console.log(`Conversa com ${senderId} pausada — mensagem enfileirada, aguardando expiração`);
+      return;
+    }
+
+    // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
+    if (await isEncerrado(senderId)) {
+      await reabrirConversa(senderId);
+      console.log(`Conversa com ${senderId} reaberta — cliente enviou nova mensagem após pausa`);
+    }
 
     if (!isHorarioComercial()) {
       console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);

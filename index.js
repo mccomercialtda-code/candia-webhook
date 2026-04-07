@@ -666,19 +666,13 @@ async function markMessageProcessed(messageId) {
 }
 async function redisGet(key) {
   try {
-    const res = await fetch(`${UPSTASH_URL}/get/${key}`, {
+    const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
     });
+
     const data = await res.json();
-    if (!data.result) return null;
-    try {
-      const parsed = JSON.parse(data.result);
-      if (parsed && typeof parsed === "object" && parsed.value !== undefined) {
-        return parsed.value;
-      }
-    } catch {
-      // not JSON, return as-is
-    }
+    if (data.result == null) return null;
+
     return data.result;
   } catch {
     return null;

@@ -13,7 +13,7 @@ const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
-const DEBOUNCE_MS = 90000;
+const DEBOUNCE_MS = 300000; // 5 minutos
 
 // Horário de funcionamento do bot (Brasília)
 const BOT_HORA_INICIO = 9;
@@ -126,7 +126,7 @@ async function limparReservasAntigas() {
     const hoje = new Date().toLocaleDateString("pt-BR", {
       timeZone: "America/Sao_Paulo",
       year: "numeric", month: "2-digit", day: "2-digit"
-    }).split("/").reverse().join("-"); // AAAA-MM-DD
+    }).split("/").reverse().join("-");
 
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
       method: "POST",
@@ -471,7 +471,7 @@ async function getPendingMessages(userId) {
 async function addPendingMessage(userId, message) {
   const messages = await getPendingMessages(userId);
   messages.push(message);
-  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400); // expira em 24h
+  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400);
 }
 
 async function clearPendingMessages(userId) {
@@ -483,7 +483,7 @@ async function getDebounceToken(userId) {
 }
 
 async function setDebounceToken(userId, token) {
-  await redisSet(`debounce:${userId}`, token, 300);
+  await redisSet(`debounce:${userId}`, token, 600);
 }
 
 async function notifyOwner(message) {
@@ -515,7 +515,7 @@ async function handleTelegramCommand(text) {
     const comercial = isHorarioComercial();
     await notifyOwner(paused
       ? "⏸ Bot está PAUSADO globalmente."
-      : `▶️ Bot está ATIVO. Horário de atendimento: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}`
+      : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}`
     );
   } else if (cmd === "/limpar") {
     await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
@@ -558,6 +558,7 @@ function extractEscalation(text) {
   return obj;
 }
 
+// Extrai datas explícitas de um texto — usado tanto na mensagem atual quanto no histórico
 function extractExplicitDates(text) {
   const ddmm = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g) || [];
   const now = new Date();
@@ -578,6 +579,15 @@ function extractExplicitDates(text) {
   }
 
   return [...new Set(results)];
+}
+
+// Extrai datas de toda a conversa (mensagem atual + histórico)
+function extractDatesFromConversation(currentMessage, history) {
+  const allText = [
+    currentMessage,
+    ...history.map(h => h.content || "")
+  ].join("\n");
+  return extractExplicitDates(allText);
 }
 
 async function sendInstagramMessage(userId, text) {
@@ -603,7 +613,7 @@ async function processMessages(userId, myToken) {
   console.log(`Debounce check — userId: ${userId}, myToken: ${myToken}, currentToken: ${currentToken}`);
 
   if (currentToken !== myToken) {
-    console.log(`Debounce: nova mensagem chegou para ${userId}, cancelando execução antiga`);
+    console.log(`Debounce: nova mensagem ou intervenção para ${userId}, cancelando execução antiga`);
     return;
   }
 
@@ -635,7 +645,10 @@ async function processMessages(userId, myToken) {
   const combinedMessage = pendingMessages.join("\n");
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
-  const explicitDates = extractExplicitDates(combinedMessage);
+  // Busca histórico antes de extrair datas — considera toda a conversa
+  const history = await getHistory(userId);
+  const explicitDates = extractDatesFromConversation(combinedMessage, history);
+
   let disponibilidadeInfo = "";
   for (const data of explicitDates) {
     const disp = await verificarDisponibilidade(data);
@@ -651,7 +664,6 @@ async function processMessages(userId, myToken) {
     }
   }
 
-  const history = await getHistory(userId);
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);
 
@@ -734,7 +746,7 @@ async function processMessages(userId, myToken) {
   await sendInstagramMessage(userId, cleanReply);
 }
 
-// Processa fila acumulada fora do horário ao entrar no horário comercial
+// Processa fila acumulada ao entrar no horário comercial
 async function processarFilaAcumulada() {
   console.log("Verificando fila acumulada fora do horário...");
   try {
@@ -759,7 +771,6 @@ async function processarFilaAcumulada() {
   }
 }
 
-// Verifica a cada minuto se chegou o horário de início
 function agendarVerificacaoHorario() {
   let eraFora = !isHorarioComercial();
   setInterval(() => {
@@ -814,7 +825,9 @@ app.post("/", async (req, res) => {
       const echoRecipient = messaging?.recipient?.id;
       if (echoRecipient && echoSender !== IG_ACCOUNT_ID) {
         await pauseConversation(echoRecipient);
-        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada por 3 horas`);
+        // Invalida o token de debounce para cancelar qualquer processamento em andamento
+        await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
+        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada e debounce cancelado`);
       }
       return;
     }
@@ -834,6 +847,7 @@ app.post("/", async (req, res) => {
     }
 
     const message = messaging?.message?.text;
+    // Ignora mídia real (foto, vídeo, áudio) mas não attachments tipo "fallback" (ex: número de telefone detectado)
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       (messaging?.message?.attachments?.some(a => a.type !== "fallback"))

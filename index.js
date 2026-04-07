@@ -1191,7 +1191,8 @@ if (reservation) {
     .replace(/\[RESERVA:.*?\]/gs, "")
     .replace(/\[ESCALAR:.*?\]/gs, "")
     .trim();
-
+  
+  await sendInstagramMessage(userId, cleanReply);
   await sendInstagramMessage(userId, cleanReply);
 
   // Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
@@ -1281,7 +1282,15 @@ app.post("/", async (req, res) => {
   const echoRecipient = messaging?.recipient?.id;
   const echoText = messaging?.message?.text || "";
 
-  if (echoRecipient && echoSender !== IG_ACCOUNT_ID) {
+  if (echoRecipient && echoSender === IG_ACCOUNT_ID) {
+    const echoDoBot = await redisGet(`echo_bot:${echoRecipient}`);
+
+    if (echoDoBot) {
+      await redisDel(`echo_bot:${echoRecipient}`);
+      console.log(`Echo do bot ignorado para ${echoRecipient}`);
+      return;
+    }
+
     await pauseConversation(echoRecipient);
     await clearPendingMessages(echoRecipient);
     await redisDel(`reserva_confirmada:${echoRecipient}`);

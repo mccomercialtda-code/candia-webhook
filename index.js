@@ -934,9 +934,17 @@ async function processMessages(userId, myToken) {
 
   console.log("Resposta Claude:", reply);
 
+  // Verificação final: checar pausa E token antes de enviar
+  // O echo da intervenção humana pode ter chegado durante a chamada ao Claude
   paused = await isPaused(userId);
   if (paused) {
     console.log(`Conversa com ${userId} pausada após Claude — cancelando envio`);
+    return;
+  }
+
+  const finalToken = await getDebounceToken(userId);
+  if (finalToken !== myToken) {
+    console.log(`Token cancelado para ${userId} durante chamada ao Claude — intervenção humana detectada, cancelando envio`);
     return;
   }
 

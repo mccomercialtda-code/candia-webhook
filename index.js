@@ -657,6 +657,13 @@ async function marcarIntervencaoHumana(userId, text) {
     await redisDel(`humano_encerrou:${userId}`);
   }
 }
+async function wasMessageProcessed(messageId) {
+  return !!(await redisGet(`msg_processed:${messageId}`));
+}
+
+async function markMessageProcessed(messageId) {
+  await redisSet(`msg_processed:${messageId}`, "1", 86400);
+}
 async function redisGet(key) {
   try {
     const res = await fetch(`${UPSTASH_URL}/get/${key}`, {
@@ -1171,11 +1178,11 @@ async function processMessages(userId, myToken) {
   await saveHistory(userId, history);
 
   const reservation = extractReservation(reply);
-  if (reservation) {
-    await salvarReservaNaNotion(reservation, userId);
-  }
-await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
-await clearPendingMessages(userId);
+if (reservation) {
+  await salvarReservaNaNotion(reservation, userId);
+  await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+  await clearPendingMessages(userId);
+}
   const escalation = extractEscalation(reply);
   if (escalation) {
     await notifyOwner(
@@ -1357,6 +1364,8 @@ if (messageId) {
   }
 
   await reabrirConversa(senderId);
+  await redisDel(`humano_encerrou:${senderId}`);
+  await redisDel(`humano_informou:${senderId}`);
   console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
 }
 

@@ -1249,7 +1249,15 @@ await redisDel(`reserva_confirmada:${echoRecipient}`);
       console.log(`Conversa com ${senderId} pausada — ignorando`);
       return;
     }
+const messageId = messaging?.message?.mid;
 
+if (messageId) {
+  if (await wasMessageProcessed(messageId)) {
+    console.log(`Mensagem duplicada ignorada: ${messageId}`);
+    return;
+  }
+  await markMessageProcessed(messageId);
+}
     const message = messaging?.message?.text;
     if (await redisGet(`reserva_confirmada:${senderId}`)) {
   if (!isMensagemNova(message)) {

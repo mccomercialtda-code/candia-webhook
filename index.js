@@ -1370,7 +1370,6 @@ app.post("/", async (req, res) => {
 
   return;
 }
-}
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;

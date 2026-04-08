@@ -840,35 +840,33 @@ async function agendarFollowUp(userId) {
   await redisSet(`followup:${userId}`, Date.now().toString(), Math.ceil(FOLLOWUP_MS / 1000) + 600);
 
   setTimeout(async () => {
-    try {
-      const token = await redisGet(`followup:${userId}`);
-      if (!token) return;
+  try {
+    const token = await redisGet(`followup:${userId}`);
+    if (!token) return;
 
-      const paused = await isPaused(userId);
-      if (paused) return;
-      if (await isGloballyPaused()) return;
-      if (!isHorarioComercial()) return;
+    const paused = await isPaused(userId);
+    if (paused) return;
+    if (await isGloballyPaused()) return;
+    if (!isHorarioComercial()) return;
 
-      // não manda follow-up se reserva já foi confirmada
-      if (await redisGet(`reserva_confirmada:${userId}`)) return;
+    if (await redisGet(`reserva_confirmada:${userId}`)) return;
+    if (await redisGet(`humano_encerrou:${userId}`)) return;
 
-      // humano encerrou a conversa/reserva → não manda follow-up
-      if (await redisGet(`humano_encerrou:${userId}`)) return;
+    await redisDel(`followup:${userId}`);
 
-      await redisDel(`followup:${userId}`);
+    let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
 
-      let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
-
-      // se humano só informou condições, manda follow-up ainda mais leve
-      if (await redisGet(`humano_informou:${userId}`)) {
-        mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
-      }
-
-await sendInstagramMessage(userId, mensagem);
-await salvarUltimaRespostaBot(userId, mensagem);
-console.log(`Follow-up enviado para ${userId}`);
+    if (await redisGet(`humano_informou:${userId}`)) {
+      mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
     }
-  }, FOLLOWUP_MS);
+
+    await sendInstagramMessage(userId, mensagem);
+    await salvarUltimaRespostaBot(userId, mensagem);
+    console.log(`Follow-up enviado para ${userId}`);
+  } catch (err) {
+    console.error(`Erro no follow-up de ${userId}:`, err);
+  }
+}, FOLLOWUP_MS);
 }
 
 async function cancelarFollowUp(userId) {
@@ -1241,6 +1239,7 @@ if (ultimaRespostaBot) {
 }
 
 let claudeData;
+
 try {
   const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -1266,8 +1265,6 @@ try {
     );
     return;
   }
-
-  // ... resto do seu processamento normal da resposta do Claude ...
 
 } catch (err) {
   console.error("Erro ao chamar a API Claude:", err);

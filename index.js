@@ -880,10 +880,27 @@ if (raw.toLowerCase().startsWith("/e ")) {
   await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
   return;
 }
+} else if (cmd.startsWith("/liberar ")) {
+  const userId = raw.split(" ")[1]?.trim();
 
-  if (cmd === "/pausar") {
-    await redisSet("global:paused", "1", 86400 * 7);
-    await notifyOwner("⏸ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
+  if (!userId) {
+    await notifyOwner("⚠️ Use: /liberar USER_ID");
+    return;
+  }
+
+  await redisDel(`paused:${userId}`);
+  await redisDel(`encerrado:${userId}`);
+  await redisDel(`humano_encerrou:${userId}`);
+  await redisDel(`humano_informou:${userId}`);
+  await redisDel(`followup:${userId}`);
+  await redisDel(`debounce:${userId}`);
+  await redisDel(`pending:${userId}`);
+
+  await notifyOwner(`✅ Usuário liberado: ${userId}`);
+
+} else if (cmd === "/pausar") {
+  await redisSet("global:paused", "1", 86400 * 7);
+  await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
 
   } else if (cmd === "/reativar") {
     await redisDel("global:paused");
@@ -945,6 +962,9 @@ Ex: /status 11/04
 /pausar — Pausa o bot globalmente
 
 /reativar — Reativa o bot
+
+/liberar USER_ID — destrava manualmente um cliente
+Ex: /liberar 1604246050664169
 
 /help — Mostra esta lista`
     );

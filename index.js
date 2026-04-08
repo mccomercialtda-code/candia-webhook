@@ -1240,28 +1240,39 @@ if (ultimaRespostaBot) {
   systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
 }
 
+let claudeData;
 try {
   const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": CLAUDE_API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: history
-      })
-    });
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: history
+    })
+  });
 
-    const claudeData = await claudeRes.json();
+  claudeData = await claudeRes.json();
 
-if (claudeData.error) {
-  console.error("Erro da API Claude:", claudeData.error);
+  if (claudeData.error) {
+    console.error("Erro da API Claude:", claudeData.error);
+    await notifyOwner(
+      `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
+    );
+    return;
+  }
+
+  // ... resto do seu processamento normal da resposta do Claude ...
+
+} catch (err) {
+  console.error("Erro ao chamar a API Claude:", err);
   await notifyOwner(
-    `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
+    `⚠️ Erro ao chamar a API Claude.\nCliente ID: ${userId}\nErro: ${err.message || err}`
   );
   return;
 }

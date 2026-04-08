@@ -1551,19 +1551,20 @@ app.post("/", async (req, res) => {
       messaging?.message?.attachments?.some(a => a.type !== "fallback")
     );
 
-    const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
+const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
+const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
 
-    if (hasMedia) {
-      if (aguardandoContato) {
-        console.log(`Mídia/card recebido de ${senderId} enquanto aguardava contato — tratando como continuação do fluxo de reserva.`);
-        message = "__CONTATO_COMPARTILHADO__";
-      } else {
-        if (isHorarioComercial()) {
-          await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
-        }
-        return;
-      }
+if (hasMedia) {
+  if (aguardandoContato || contatoDetectado) {
+    console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
+    return;
+  } else {
+    if (isHorarioComercial()) {
+      await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
     }
+    return;
+  }
+}
 
     if (!message) return;
 

@@ -994,6 +994,8 @@ Ex: /status 11/04
   );
   return;
 }
+}
+
 function extractReservation(text) {
   const match = text.match(/\[RESERVA:(.*?)\]/s);
   if (!match) return null;

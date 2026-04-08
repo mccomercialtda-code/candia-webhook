@@ -550,12 +550,15 @@ FLUXO DE RESERVA
 4. Se esgotado: informar e sugerir outra data
 5. Se área descoberta: avisar que é área externa e perguntar se aceita
 6. Se disponível: perguntar "Podemos seguir com a reserva nesse formato?"
-7. Se sim: pedir nome do aniversariante e contato
+7. Se sim: pedir nome do aniversariante, telefone de contato e previsão total de pessoas
 8. Se mencionar preferência de local: registrar na observação
 9. Confirmar a reserva. Não mencionar chope nem couvert na confirmação.
+- Para confirmar a reserva, garantir sempre que tem o nome do aniversariante, telefone de contato e previsão total de pessoas
+- Nunca pedir Instagram para confirmar reserva, porque esse dado já está disponível no sistema
+- Se o cliente já tiver informado um desses dados, pedir apenas o que estiver faltando
 10. Pedir aviso em caso de imprevisto
-11. Ao confirmar, incluir no final da mensagem (invisível para o cliente):
-[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=CONTATO, lugares=N, total_esperado=N, observacao=TEXTO_OU_VAZIO]
+11. Quando nome, telefone e previsão total de pessoas estiverem definidos, confirmar a reserva e incluir no final da mensagem(invisível para o cliente):
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME, contato=TELEFONE, lugares=N, total_esperado=N, observacao=TEXTO_OU_VAZIO]
 - Se a reserva for em área externa/descoberta: incluir "Área externa (descoberta)" no campo observacao
 - No campo observacao: registrar apenas preferências de local, área externa ou observações relevantes. Nunca registrar que pessoas ficarão em volta da mesa.
 
@@ -1324,13 +1327,20 @@ if (escalarMatch) {
   }
 
   history.push({ role: "assistant", content: reply });
-  await saveHistory(userId, history);
+await saveHistory(userId, history);
 
-  const reservation = extractReservation(reply);
+const reservation = extractReservation(reply);
+
 if (reservation) {
   await salvarReservaNaNotion(reservation, userId);
   await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
   await clearPendingMessages(userId);
+
+  // limpa estados temporários do fluxo de reserva
+  await redisDel(`aguardando_contato:${userId}`);
+  await redisDel(`contato_detectado:${userId}`);
+
+  console.log(`Reserva concluída e estados limpos para ${userId}`);
 }
   const escalation = extractEscalation(reply);
   if (escalation) {
@@ -1339,7 +1349,7 @@ if (reservation) {
     );
   }
 
-  const cleanReply = reply
+const cleanReply = reply
   .replace(/\[RESERVA:.*?\]/gs, "")
   .replace(/\[ESCALAR:.*?\]/gs, "")
   .trim();
@@ -1348,6 +1358,29 @@ if (reservation) {
 if (await shouldSkipDuplicateReply(userId, cleanReply)) {
   console.log(`Resposta duplicada ignorada para ${userId}`);
   return;
+}
+
+// Se a resposta estiver pedindo os dados finais da reserva,
+// marca que estamos aguardando telefone/contato do cliente
+const replyLower = cleanReply.toLowerCase();
+
+const pedindoDadosReserva =
+  (
+    replyLower.includes("telefone") ||
+    replyLower.includes("contato")
+  ) &&
+  (
+    replyLower.includes("previsão total") ||
+    replyLower.includes("previsao total") ||
+    replyLower.includes("total de pessoas") ||
+    replyLower.includes("quantas pessoas") ||
+    replyLower.includes("previsão de pessoas") ||
+    replyLower.includes("previsao de pessoas")
+  );
+
+if (pedindoDadosReserva) {
+  await redisSet(`aguardando_contato:${userId}`, "1", 600);
+  console.log(`Bot está aguardando telefone/previsão de pessoas de ${userId}`);
 }
 
 // 🧠 marca última resposta
@@ -1362,13 +1395,12 @@ await salvarUltimaRespostaBot(userId, cleanReply);
 
 // Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
 const isConfirmacao = !!reservation;
-  const isEscalacao = !!escalation;
-  if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
-    await agendarFollowUp(userId);
-    console.log(`Follow-up agendado para ${userId} em 6h`);
-  }
-}
+const isEscalacao = !!escalation;
 
+if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
+  await agendarFollowUp(userId);
+  console.log(`Follow-up agendado para ${userId} em 6h`);
+}
 async function processarFilaAcumulada() {
   console.log("Verificando fila acumulada fora do horário...");
   try {
@@ -1442,40 +1474,40 @@ app.post("/", async (req, res) => {
       return;
     }
 
- if (messaging?.message?.is_echo) {
-  const echoSender = messaging?.sender?.id;
-  const echoRecipient = messaging?.recipient?.id;
-  const echoText = messaging?.message?.text || "";
+    if (messaging?.message?.is_echo) {
+      const echoSender = messaging?.sender?.id;
+      const echoRecipient = messaging?.recipient?.id;
+      const echoText = messaging?.message?.text || "";
 
-  if (echoRecipient && echoSender === IG_ACCOUNT_ID) {
-    const echoDoBot = await redisGet(`echo_bot:${echoRecipient}`);
+      if (echoRecipient && echoSender === IG_ACCOUNT_ID) {
+        const echoDoBot = await redisGet(`echo_bot:${echoRecipient}`);
 
-    if (echoDoBot) {
-      await redisDel(`echo_bot:${echoRecipient}`);
-      console.log(`Echo do bot ignorado para ${echoRecipient}`);
+        if (echoDoBot) {
+          await redisDel(`echo_bot:${echoRecipient}`);
+          console.log(`Echo do bot ignorado para ${echoRecipient}`);
+          return;
+        }
+
+        await pauseConversation(echoRecipient);
+        await clearPendingMessages(echoRecipient);
+        await redisDel(`reserva_confirmada:${echoRecipient}`);
+        await marcarIntervencaoHumana(echoRecipient, echoText);
+        await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
+        await cancelarFollowUp(echoRecipient);
+
+        console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada, classificada e debounce cancelado`);
+      }
+
       return;
     }
 
-    await pauseConversation(echoRecipient);
-    await clearPendingMessages(echoRecipient);
-    await redisDel(`reserva_confirmada:${echoRecipient}`);
-    await marcarIntervencaoHumana(echoRecipient, echoText);
-    await setDebounceToken(echoRecipient, `cancelled_${Date.now()}`);
-    await cancelarFollowUp(echoRecipient);
-
-    console.log(`Intervenção humana detectada — conversa com ${echoRecipient} pausada, classificada e debounce cancelado`);
-  }
-
-  return;
-}
-
     const senderId = messaging?.sender?.id;
-if (!senderId) return;
+    if (!senderId) return;
 
-if (await isConversaEscalada(senderId)) {
-  console.log(`Conversa com ${senderId} está escalada — ignorando mensagem`);
-  return;
-}
+    if (await isConversaEscalada(senderId)) {
+      console.log(`Conversa com ${senderId} está escalada — ignorando mensagem`);
+      return;
+    }
 
     if (await isGloballyPaused()) {
       console.log(`Bot pausado globalmente — ignorando mensagem de ${senderId}`);
@@ -1487,51 +1519,59 @@ if (await isConversaEscalada(senderId)) {
       console.log(`Conversa com ${senderId} pausada — ignorando`);
       return;
     }
-const messageId = messaging?.message?.mid;
 
-if (messageId) {
-  if (await wasMessageProcessed(messageId)) {
-    console.log(`Mensagem duplicada ignorada: ${messageId}`);
-    return;
-  }
-  await markMessageProcessed(messageId);
-}
+    const messageId = messaging?.message?.mid;
 
-const message = messaging?.message?.text;
+    if (messageId) {
+      if (await wasMessageProcessed(messageId)) {
+        console.log(`Mensagem duplicada ignorada: ${messageId}`);
+        return;
+      }
+      await markMessageProcessed(messageId);
+    }
 
-if (isOnlyPhoneNumber(message)) {
-  console.log(`Telefone detectado automaticamente de ${senderId}: ${message}`);
-  await redisSet(`contato_detectado:${senderId}`, message, 86400);
-}
+    let message = messaging?.message?.text || "";
 
-if (await redisGet(`reserva_confirmada:${senderId}`)) {
-  if (!isMensagemNova(message)) {
-    console.log(`Mensagem ignorada (pós-reserva) de ${senderId}: ${message}`);
-    return;
-  }
-}
+    if (message && isOnlyPhoneNumber(message)) {
+      console.log(`Telefone detectado automaticamente de ${senderId}: ${message}`);
+      await redisSet(`contato_detectado:${senderId}`, message, 86400);
+    }
 
-const hasMedia = !message && (
-  messaging?.message?.sticker_id ||
-  (messaging?.message?.attachments?.some(a => a.type !== "fallback"))
-);
+    if (await redisGet(`reserva_confirmada:${senderId}`)) {
+      if (!isMensagemNova(message)) {
+        console.log(`Mensagem ignorada (pós-reserva) de ${senderId}: ${message}`);
+        return;
+      }
+    }
 
-if (hasMedia) {
-  if (isHorarioComercial()) {
-    await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
-  }
-  return;
-}
+    const hasMedia = !message && (
+      messaging?.message?.sticker_id ||
+      messaging?.message?.attachments?.some(a => a.type !== "fallback")
+    );
 
-if (!message) return;
+    const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
 
-if (isOnlyPhoneNumber(message)) {
-  console.log(`Contato detectado de ${senderId}: ${message}`);
-  await redisSet(`contato_detectado:${senderId}`, message, 86400);
-}
+    if (hasMedia) {
+      if (aguardandoContato) {
+        console.log(`Mídia/card recebido de ${senderId} enquanto aguardava contato — tratando como continuação do fluxo de reserva.`);
+        message = "__CONTATO_COMPARTILHADO__";
+      } else {
+        if (isHorarioComercial()) {
+          await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
+        }
+        return;
+      }
+    }
 
-await addPendingMessage(senderId, message);
-console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
+    if (!message) return;
+
+    if (isOnlyPhoneNumber(message)) {
+      console.log(`Contato detectado de ${senderId}: ${message}`);
+      await redisSet(`contato_detectado:${senderId}`, message, 86400);
+    }
+
+    await addPendingMessage(senderId, message);
+    console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
     // Se conversa foi encerrada por humano e pausa ainda ativa: só enfileira, não processa
     if (await isPaused(senderId)) {
@@ -1541,16 +1581,16 @@ console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
     if (await isEncerrado(senderId)) {
-  if (!isMensagemNova(message)) {
-    console.log(`Mensagem ignorada (conversa encerrada) de ${senderId}: ${message}`);
-    return;
-  }
+      if (!isMensagemNova(message)) {
+        console.log(`Mensagem ignorada (conversa encerrada) de ${senderId}: ${message}`);
+        return;
+      }
 
-  await reabrirConversa(senderId);
-  await redisDel(`humano_encerrou:${senderId}`);
-  await redisDel(`humano_informou:${senderId}`);
-  console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
-}
+      await reabrirConversa(senderId);
+      await redisDel(`humano_encerrou:${senderId}`);
+      await redisDel(`humano_informou:${senderId}`);
+      console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
+    }
 
     if (!isHorarioComercial()) {
       console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
@@ -1565,7 +1605,6 @@ console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
     console.error("Erro:", err);
   }
 });
-
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   agendarLimpezaSemanal();

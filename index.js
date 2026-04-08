@@ -1399,8 +1399,10 @@ const isEscalacao = !!escalation;
 
 if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
   await agendarFollowUp(userId);
-  console.log(`Follow-up agendado para ${userId} em 6h`);
+ console.log(`Follow-up agendado para ${userId} em 6h`);
 }
+}
+
 async function processarFilaAcumulada() {
   console.log("Verificando fila acumulada fora do horário...");
   try {

@@ -179,6 +179,17 @@ async function clearOverride(dataISO) {
   await redisDel(`override:${dataISO}`);
   console.log(`Override removido para ${dataISO}`);
 }
+async function marcarConversaEscalada(userId, motivo = "") {
+  await redisSet(`conversa_escalada:${userId}`, motivo || "1", 86400 * 2);
+}
+
+async function isConversaEscalada(userId) {
+  return !!(await redisGet(`conversa_escalada:${userId}`));
+}
+
+async function limparConversaEscalada(userId) {
+  await redisDel(`conversa_escalada:${userId}`);
+}
 
 async function buscarReservasPorData(dataISO) {
   try {
@@ -421,6 +432,14 @@ REGRA GERAL
 - Respostas curtas são bem-vindas quando a pergunta é simples — "Sim", "R$10 por pessoa", "Varia bastante!" são respostas válidas
 - Simpatia sim, prolixidade não
 
+INTERPRETAÇÃO DE RESPOSTAS CURTAS
+
+- O cliente pode responder de forma curta como "ok", "pode ser", "sim", "por favor"
+- Sempre interpretar essas respostas com base na última pergunta feita
+- Se a última pergunta foi de confirmação, trate como confirmação positiva
+- Nunca reiniciar o fluxo ou pedir informações já solicitadas novamente
+- Geralmente respostas curtas indicam continuidade da conversa, não início de novo assunto
+
 FUNCIONAMENTO
 - Fechado às segundas-feiras
 - Terça a quinta: 17h às 00h
@@ -443,13 +462,19 @@ COUVERT ARTÍSTICO
 - Se perguntarem: responder diretamente o valor. Ex: "R$10 por pessoa" (sex/sáb/dom) ou "R$12 por pessoa" (ter/qua/qui)
 - Sem isenção para aniversariante ou acompanhante
 
-PROMOÇÃO DE SÁBADO
-- Feijoada + chope pilsen 300ml por R$20 até as 14h
-- Só mencionar se o cliente perguntar
+FEIJOADA
+- Temos feijoada aos sábados e domingos
+- Aos sábados, até as 14h, temos a promoção: feijoada + chope pilsen 300ml por R$20 - após este horário preço normal do cardápio
+- Aos domingos tem feijoada normalmente, mas sem essa promoção do combo de sábado
+- Só mencionar feijoada se o cliente perguntar
+- Se perguntarem apenas "tem feijoada?", responder de forma direta informando os dias
+- Se perguntarem sobre promoção, informar que o combo promocional é só no sábado até as 14h
 
 PROMOÇÃO DO CHOPE PARA GRUPOS
 - Grupos com mais de 10 pessoas ganham 2 litros de chope grátis
-- Só mencionar se o cliente perguntar sobre condições especiais ou promoções para aniversariante
+- Se o cliente perguntar sobre benefício para grupo, condição especial, vantagem para aniversário ou promoção para grupo grande, informar esse benefício diretamente
+- Só mencionar esse benefício quando a pergunta tiver relação com vantagens, promoções, condições especiais ou aniversariante
+- Nunca inventar outros benefícios além dos 2 litros de chope
 - NUNCA dizer que "não tem promoção" — simplesmente não mencionar a menos que perguntem
 
 RESERVAS — REGRAS GERAIS
@@ -562,6 +587,9 @@ PERGUNTAS FREQUENTES
 - Cerveja 600ml: não temos. Só chope e long neck.
 - Copo: pode trazer, sem restrições
 - Paga entrada: não. Tem couvert artístico (só mencionar valor se perguntarem)
+- Benefício para grupos grandes: grupos com mais de 10 pessoas ganham 2 litros de chope grátis
+- Feijoada: temos aos sábados e domingos
+- Promoção da feijoada: somente sábado até as 14h, com feijoada + chope pilsen 300ml por R$20
 
 EXEMPLOS DE TOM
 "Temos sim! O samba começa às 18h30 e vai até às 21h30 😊"
@@ -588,6 +616,7 @@ function isOnlyPhoneNumber(text) {
 
   const lower = text.toLowerCase();
 
+  // Se claramente está informando contato
   if (
     lower.includes("telefone") ||
     lower.includes("contato") ||
@@ -598,8 +627,16 @@ function isOnlyPhoneNumber(text) {
     return true;
   }
 
-  const cleaned = text.replace(/\D/g, "");
-  return cleaned.length >= 10 && cleaned.length <= 14;
+  // Remove tudo que não é número
+  const digits = text.replace(/\D/g, "");
+
+  // Detecta telefone válido (com ou sem nome junto)
+  if (digits.length >= 10 && digits.length <= 14) {
+    return true;
+  }
+
+  return false;
+
 }
 function isMensagemNova(text) {
   if (!text) return false;
@@ -659,6 +696,14 @@ async function marcarIntervencaoHumana(userId, text) {
 }
 async function wasMessageProcessed(messageId) {
   return !!(await redisGet(`msg_processed:${messageId}`));
+}
+
+async function salvarUltimaRespostaBot(userId, text) {
+  await redisSet(`ultima_resposta_bot:${userId}`, text, 86400);
+}
+
+async function getUltimaRespostaBot(userId) {
+  return await redisGet(`ultima_resposta_bot:${userId}`);
 }
 
 async function markMessageProcessed(messageId) {
@@ -819,10 +864,9 @@ async function agendarFollowUp(userId) {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
 
-      await sendInstagramMessage(userId, mensagem);
-      console.log(`Follow-up enviado para ${userId}`);
-    } catch (err) {
-      console.error("Erro no follow-up:", err);
+await sendInstagramMessage(userId, mensagem);
+await salvarUltimaRespostaBot(userId, mensagem);
+console.log(`Follow-up enviado para ${userId}`);
     }
   }, FOLLOWUP_MS);
 }
@@ -916,9 +960,23 @@ if (cmd === "/pausar") {
   return;
 }
 
-if (cmd === "/reativar") {
+if (cmd.startsWith("/reativar")) {
+  const parts = raw.split(" ");
+
+  // Se vier com ID → reativa conversa específica
+  if (parts.length > 1) {
+    const userId = parts[1].trim();
+
+    await limparConversaEscalada(userId);
+    await redisDel(`paused:${userId}`);
+
+    await notifyOwner(`▶️ Conversa ${userId} reativada!`);
+    return;
+  }
+
+  // Sem ID → reativa global
   await redisDel("global:paused");
-  await notifyOwner("▶️ Bot reativado! Voltando a responder normalmente.");
+  await notifyOwner("▶️ Bot reativado globalmente!");
   return;
 }
 
@@ -1169,8 +1227,21 @@ async function processMessages(userId, myToken) {
   }
 
   let reply;
-  try {
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+
+let systemPrompt = getSystemPrompt(disponibilidadeInfo || null);
+
+const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
+if (contatoDetectado) {
+  systemPrompt += `\nCONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}\n`;
+}
+
+const ultimaRespostaBot = await getUltimaRespostaBot(userId);
+if (ultimaRespostaBot) {
+  systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
+}
+
+try {
+  const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -1180,29 +1251,38 @@ async function processMessages(userId, myToken) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 1024,
-        system: getSystemPrompt(disponibilidadeInfo || null),
+        system: systemPrompt,
         messages: history
       })
     });
 
     const claudeData = await claudeRes.json();
 
-    if (claudeData.error) {
-      console.error("Erro da API Claude:", claudeData.error);
-      await notifyOwner(
-        `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
-      );
-      return;
-    }
+if (claudeData.error) {
+  console.error("Erro da API Claude:", claudeData.error);
+  await notifyOwner(
+    `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
+  );
+  return;
+}
 
-    reply = claudeData.content?.[0]?.text;
-  } catch (err) {
-    console.error("Erro ao chamar Claude:", err);
-    await notifyOwner(
-      `⚠️ Erro ao chamar a API do Claude!\nCliente ID: ${userId}\nErro: ${err.message}\nVerifique os créditos em console.anthropic.com`
-    );
-    return;
-  }
+reply = claudeData.content?.[0]?.text;
+
+const escalarMatch = reply?.match(/\[ESCALAR:\s*motivo=(.*?)\]/i);
+
+if (escalarMatch) {
+  const motivoEscalada = escalarMatch[1]?.trim() || "Sem motivo informado";
+
+  await notifyOwner(`⚠️ Escalonar conversa com ${userId}\nMotivo: ${motivoEscalada}`);
+  await marcarConversaEscalada(userId, motivoEscalada);
+  await clearPendingMessages(userId);
+  await setDebounceToken(userId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(userId);
+
+  console.log(`Conversa ${userId} marcada como escalada.`);
+
+  reply = reply.replace(/\[ESCALAR:\s*motivo=.*?\]/i, "").trim();
+}
 
   if (!reply) {
     console.error("Resposta vazia do Claude");
@@ -1261,9 +1341,10 @@ await redisSet(`echo_bot:${userId}`, "1", 30);
 
 // 📩 envia mensagem
 await sendInstagramMessage(userId, cleanReply);
+await salvarUltimaRespostaBot(userId, cleanReply);
 
-  // Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
-  const isConfirmacao = !!reservation;
+// Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
+const isConfirmacao = !!reservation;
   const isEscalacao = !!escalation;
   if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
     await agendarFollowUp(userId);
@@ -1372,7 +1453,12 @@ app.post("/", async (req, res) => {
 }
 
     const senderId = messaging?.sender?.id;
-    if (!senderId) return;
+if (!senderId) return;
+
+if (await isConversaEscalada(senderId)) {
+  console.log(`Conversa com ${senderId} está escalada — ignorando mensagem`);
+  return;
+}
 
     if (await isGloballyPaused()) {
       console.log(`Bot pausado globalmente — ignorando mensagem de ${senderId}`);
@@ -1393,35 +1479,42 @@ if (messageId) {
   }
   await markMessageProcessed(messageId);
 }
-    const message = messaging?.message?.text;
-    if (await redisGet(`reserva_confirmada:${senderId}`)) {
+
+const message = messaging?.message?.text;
+
+if (isOnlyPhoneNumber(message)) {
+  console.log(`Telefone detectado automaticamente de ${senderId}: ${message}`);
+  await redisSet(`contato_detectado:${senderId}`, message, 86400);
+}
+
+if (await redisGet(`reserva_confirmada:${senderId}`)) {
   if (!isMensagemNova(message)) {
     console.log(`Mensagem ignorada (pós-reserva) de ${senderId}: ${message}`);
     return;
   }
 }
-    const hasMedia = !message && (
-      messaging?.message?.sticker_id ||
-      (messaging?.message?.attachments?.some(a => a.type !== "fallback"))
-    );
 
-    if (hasMedia) {
-      if (isHorarioComercial()) {
-        await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
-      }
-      return;
-    }
+const hasMedia = !message && (
+  messaging?.message?.sticker_id ||
+  (messaging?.message?.attachments?.some(a => a.type !== "fallback"))
+);
 
-    if (!message) return;
+if (hasMedia) {
+  if (isHorarioComercial()) {
+    await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
+  }
+  return;
+}
 
-    // Ignora mensagens que são apenas números de telefone (detectados pelo Instagram)
-    if (isOnlyPhoneNumber(message)) {
-      console.log(`Mensagem de ${senderId} ignorada — apenas número de telefone: ${message}`);
-      return;
-    }
+if (!message) return;
 
-    await addPendingMessage(senderId, message);
-    console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
+if (isOnlyPhoneNumber(message)) {
+  console.log(`Contato detectado de ${senderId}: ${message}`);
+  await redisSet(`contato_detectado:${senderId}`, message, 86400);
+}
+
+await addPendingMessage(senderId, message);
+console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
     // Se conversa foi encerrada por humano e pausa ainda ativa: só enfileira, não processa
     if (await isPaused(senderId)) {

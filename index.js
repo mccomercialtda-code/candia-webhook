@@ -1192,6 +1192,8 @@ async function processMessages(userId, myToken) {
   await clearPendingMessages(userId);
 
   const combinedMessage = pendingMessages.join("\n");
+  const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
+  
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
   // Cancela follow-up pendente pois o cliente respondeu
@@ -1229,8 +1231,15 @@ async function processMessages(userId, myToken) {
 let systemPrompt = getSystemPrompt(disponibilidadeInfo || null);
 
 const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
+
 if (contatoDetectado) {
   systemPrompt += `\nCONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}\n`;
+  systemPrompt += `\nIMPORTANTE: se o único dado que faltava para concluir a reserva era o contato, considere este contato como válido e prossiga para a confirmação final da reserva. Nesse caso, NÃO peça o contato novamente. Gere a resposta final de confirmação e inclua o bloco [RESERVA: ...] completo com esse contato.\n`;
+}
+
+// 👇 NOVO BLOCO
+if (mensagemEhSoContato) {
+  systemPrompt += `\nA MENSAGEM ATUAL DO CLIENTE É APENAS O CONTATO. Se já houver contexto suficiente da reserva nas mensagens anteriores, conclua a reserva agora. NÃO trate esta mensagem como novo assunto. NÃO peça o contato novamente.\n`;
 }
 
 const ultimaRespostaBot = await getUltimaRespostaBot(userId);

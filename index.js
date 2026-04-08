@@ -664,6 +664,16 @@ async function wasMessageProcessed(messageId) {
 async function markMessageProcessed(messageId) {
   await redisSet(`msg_processed:${messageId}`, "1", 86400);
 }
+
+async function shouldSkipDuplicateReply(userId, replyText) {
+  const lastReply = await redisGet(`last_reply:${userId}`);
+  return lastReply === replyText;
+}
+
+async function markLastReply(userId, replyText) {
+  await redisSet(`last_reply:${userId}`, replyText, 15);
+}
+
 async function redisGet(key) {
   try {
     const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
@@ -1233,12 +1243,24 @@ if (reservation) {
   }
 
   const cleanReply = reply
-    .replace(/\[RESERVA:.*?\]/gs, "")
-    .replace(/\[ESCALAR:.*?\]/gs, "")
-    .trim();
-  
-  await sendInstagramMessage(userId, cleanReply);
-  await sendInstagramMessage(userId, cleanReply);
+  .replace(/\[RESERVA:.*?\]/gs, "")
+  .replace(/\[ESCALAR:.*?\]/gs, "")
+  .trim();
+
+// 🚫 evita envio duplicado
+if (await shouldSkipDuplicateReply(userId, cleanReply)) {
+  console.log(`Resposta duplicada ignorada para ${userId}`);
+  return;
+}
+
+// 🧠 marca última resposta
+await markLastReply(userId, cleanReply);
+
+// 🤖 marca que o próximo echo é do bot
+await redisSet(`echo_bot:${userId}`, "1", 30);
+
+// 📩 envia mensagem
+await sendInstagramMessage(userId, cleanReply);
 
   // Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
   const isConfirmacao = !!reservation;
@@ -1347,6 +1369,7 @@ app.post("/", async (req, res) => {
   }
 
   return;
+}
 }
 
     const senderId = messaging?.sender?.id;

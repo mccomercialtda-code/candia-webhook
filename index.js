@@ -880,7 +880,7 @@ if (raw.toLowerCase().startsWith("/e ")) {
   await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
   return;
 }
-} else if (cmd.startsWith("/liberar ")) {
+if (cmd.startsWith("/liberar ")) {
   const userId = raw.split(" ")[1]?.trim();
 
   if (!userId) {
@@ -897,50 +897,76 @@ if (raw.toLowerCase().startsWith("/e ")) {
   await redisDel(`pending:${userId}`);
 
   await notifyOwner(`✅ Usuário liberado: ${userId}`);
+  return;
+}
 
-} else if (cmd === "/pausar") {
+if (cmd === "/pausar") {
   await redisSet("global:paused", "1", 86400 * 7);
   await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
+  return;
+}
 
-  } else if (cmd === "/reativar") {
-    await redisDel("global:paused");
-    await notifyOwner("▶️ Bot reativado! Voltando a responder normalmente.");
+if (cmd === "/reativar") {
+  await redisDel("global:paused");
+  await notifyOwner("▶️ Bot reativado! Voltando a responder normalmente.");
+  return;
+}
 
-  } else if (cmd === "/status") {
-    const paused = await isGloballyPaused();
-    const comercial = isHorarioComercial();
-    await notifyOwner(paused
+if (cmd === "/status") {
+  const paused = await isGloballyPaused();
+  const comercial = isHorarioComercial();
+  await notifyOwner(
+    paused
       ? "⏸ Bot está PAUSADO globalmente."
       : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}`
-    );
+  );
+  return;
+}
 
-  } else if (cmd.startsWith("/limpar ")) {
-    const dataISO = parseDateFromCommand(cmd.slice(8));
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04"); return; }
-    await clearOverride(dataISO);
-    await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
+if (cmd.startsWith("/limpar ")) {
+  const dataISO = parseDateFromCommand(cmd.slice(8));
+  if (!dataISO) {
+    await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04");
+    return;
+  }
+  await clearOverride(dataISO);
+  await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
+  return;
+}
 
-  } else if (cmd === "/limpar") {
-    await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
-    try {
-      const n = await limparReservasAntigas();
-      await notifyOwner(`✅ Limpeza concluída: ${n} reserva(s) antiga(s) removida(s).`);
-    } catch (err) {
-      await notifyOwner(`⚠️ Erro na limpeza: ${err.message}`);
-    }
+if (cmd === "/limpar") {
+  await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
+  try {
+    const n = await limparReservasAntigas();
+    await notifyOwner(`✅ Limpeza concluída: ${n} reserva(s) antiga(s) removida(s).`);
+  } catch (err) {
+    await notifyOwner(`⚠️ Erro na limpeza: ${err.message}`);
+  }
+  return;
+}
 
-  } else if (cmd.startsWith("/status ")) {
-    const dataISO = parseDateFromCommand(cmd.slice(8));
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /status 11/04"); return; }
-    const override = await getOverride(dataISO);
-    const disp = await verificarDisponibilidade(formatDateBR(dataISO).replace(/\/(\d{4})$/, "").split("/").map((v,i) => i===2?v:v).join("/") + "/" + dataISO.split("-")[0]);
-    let msg = `📅 Status ${formatDateBR(dataISO)}:\n`;
-    if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
-    msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
-    await notifyOwner(msg);
+if (cmd.startsWith("/status ")) {
+  const dataISO = parseDateFromCommand(cmd.slice(8));
+  if (!dataISO) {
+    await notifyOwner("⚠️ Data inválida. Use: /status 11/04");
+    return;
+  }
 
-  } else if (cmd === "/help") {
-    await notifyOwner(
+  const override = await getOverride(dataISO);
+  const disp = await verificarDisponibilidade(
+    formatDateBR(dataISO).replace(/\/(\d{4})$/, "").split("/").map((v, i) => i === 2 ? v : v).join("/") + "/" + dataISO.split("-")[0]
+  );
+
+  let msg = `📅 Status ${formatDateBR(dataISO)}:\n`;
+  if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
+  msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
+
+  await notifyOwner(msg);
+  return;
+}
+
+if (cmd === "/help") {
+  await notifyOwner(
 `📋 Comandos disponíveis:
 
 /Ex DD/MM — Força área EXTERNA para uma data
@@ -948,6 +974,9 @@ Ex: /Ex 11/04
 
 /E DD/MM — Força ESGOTADO para uma data
 Ex: /E 11/04
+
+/liberar USER_ID — destrava manualmente um cliente
+Ex: /liberar 1604246050664169
 
 /limpar DD/MM — Remove override de uma data
 Ex: /limpar 11/04
@@ -960,17 +989,11 @@ Ex: /status 11/04
 /status — Mostra se o bot está ativo ou pausado
 
 /pausar — Pausa o bot globalmente
-
 /reativar — Reativa o bot
-
-/liberar USER_ID — destrava manualmente um cliente
-Ex: /liberar 1604246050664169
-
 /help — Mostra esta lista`
-    );
-  }
+  );
+  return;
 }
-
 function extractReservation(text) {
   const match = text.match(/\[RESERVA:(.*?)\]/s);
   if (!match) return null;

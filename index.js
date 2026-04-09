@@ -283,11 +283,11 @@ async function enviarLembretes2Dias() {
   }
 
   let falhas = [];
+
   for (const reserva of reservas) {
     const nome = reserva.properties?.Nome?.title?.[0]?.text?.content || "cliente";
     const igId = reserva.properties?.["Instagram ID"]?.rich_text?.[0]?.text?.content || "";
     const contato = reserva.properties?.Contato?.rich_text?.[0]?.text?.content || "";
-    const dataReserva = reserva.properties?.Data?.rich_text?.[0]?.text?.content || "";
     const dia = reserva.properties?.Dia?.rich_text?.[0]?.text?.content || "";
 
     if (!igId) {
@@ -304,15 +304,35 @@ async function enviarLembretes2Dias() {
         },
         body: JSON.stringify({
           recipient: { id: igId },
-          message: { text: `Oi, ${nome.split(" ")[0]}! 😊 Passando pra confirmar sua reserva no Candiá no dia ${dia}. Tudo certo pra comemorar com a gente? 🎉` }
+          message: {
+            text: `Oi, ${nome.split(" ")[0]}! 😊 Passando pra confirmar sua reserva no Candiá no dia ${dia}. Tudo certo pra comemorar com a gente? 🎉`
+          }
         })
       });
+
       const igData = await igRes.json();
-      if (igData.error) {
-        falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
-      } else {
-        console.log(`Lembrete enviado para ${nome} (${igId})`);
+
+if (igData.error) {
+  falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
+} else {
+  console.log(`Lembrete enviado para ${nome} (${igId})`);
+
+  await fetch(`https://api.notion.com/v1/pages/${reserva.id}`, {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${NOTION_TOKEN}`,
+      "Content-Type": "application/json",
+      "Notion-Version": "2022-06-28"
+    },
+    body: JSON.stringify({
+      properties: {
+        "Confirmado": {
+          multi_select: [{ name: "Pendente" }]
+        }
       }
+    })
+  });
+}
     } catch (err) {
       falhas.push(`${nome} (erro de rede — contato: ${contato})`);
     }

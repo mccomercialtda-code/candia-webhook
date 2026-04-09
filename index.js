@@ -131,6 +131,23 @@ async function verificarDisponibilidade(dataStr) {
 
 async function salvarReservaNaNotion(data, instagramId) {
   try {
+    const properties = {
+      "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
+      "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
+      "Dia": { rich_text: [{ text: { content: formatDiaNotion(data.dia, data.data) } }] },
+      "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
+      "Lugares": { number: parseInt(data.lugares) || 0 },
+      "Total esperado": { number: parseInt(data.total_esperado) || 0 },
+      "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] }
+    };
+
+    // 👇 só adiciona Observações se tiver conteúdo
+    if (data.observacao && data.observacao.trim()) {
+      properties["Observações"] = {
+        rich_text: [{ text: { content: data.observacao.trim() } }]
+      };
+    }
+
     const res = await fetch("https://api.notion.com/v1/pages", {
       method: "POST",
       headers: {
@@ -140,27 +157,23 @@ async function salvarReservaNaNotion(data, instagramId) {
       },
       body: JSON.stringify({
         parent: { database_id: NOTION_DB_ID },
-        properties: {
-          "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
-          "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
-          "Dia": { rich_text: [{ text: { content: formatDiaNotion(data.dia, data.data) } }] },
-          "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
-          "Lugares": { number: parseInt(data.lugares) || 0 },
-          "Total esperado": { number: parseInt(data.total_esperado) || 0 },
-          "Observações": { rich_text: [{ text: { content: data.observacao || "" } }] },
-          "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] },
-          "Confirmado": { select: { name: "⏳ Pendente" } }
-        }
+        properties
       })
     });
+
     const result = await res.json();
+
     if (result.id) {
       console.log("Reserva gravada no Notion:", result.id);
+      return true; // 👈 importante pro próximo passo
     } else {
       console.error("Erro ao gravar no Notion:", JSON.stringify(result));
+      return false;
     }
+
   } catch (err) {
     console.error("Erro ao gravar reserva no Notion:", err);
+    return false;
   }
 }
 
@@ -1332,23 +1345,28 @@ await saveHistory(userId, history);
 const reservation = extractReservation(reply);
 
 if (reservation) {
-  await salvarReservaNaNotion(reservation, userId);
-  await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
-  await clearPendingMessages(userId);
+  const salvou = await salvarReservaNaNotion(reservation, userId);
 
-  // limpa estados temporários do fluxo de reserva
-  await redisDel(`aguardando_contato:${userId}`);
-  await redisDel(`contato_detectado:${userId}`);
+  if (salvou) {
+    await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+    await clearPendingMessages(userId);
 
-  console.log(`Reserva concluída e estados limpos para ${userId}`);
-}
-  const escalation = extractEscalation(reply);
-  if (escalation) {
-    await notifyOwner(
-      `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
-    );
+    // limpa estados temporários do fluxo de reserva
+    await redisDel(`aguardando_contato:${userId}`);
+    await redisDel(`contato_detectado:${userId}`);
+
+    console.log(`Reserva concluída e estados limpos para ${userId}`);
+  } else {
+    console.log(`⚠️ Falha ao salvar reserva para ${userId} — mantendo estado para nova tentativa`);
   }
+}
 
+const escalation = extractEscalation(reply);
+if (escalation) {
+  await notifyOwner(
+    `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
+  );
+}
 const cleanReply = reply
   .replace(/\[RESERVA:.*?\]/gs, "")
   .replace(/\[ESCALAR:.*?\]/gs, "")

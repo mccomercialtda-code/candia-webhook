@@ -27,11 +27,18 @@ const LIMITES = {
   "domingo": { coberto: 10, descoberto: 0,  total: 10 }
 };
 
-function isHorarioComercial() {
+async function isHorarioComercial() {
+  if (await isForceOutsideHoursEnabled()) {
+    return true;
+  }
+
   const now = new Date();
   const hora = parseInt(now.toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo", hour: "2-digit", hour12: false
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    hour12: false
   }));
+
   return hora >= BOT_HORA_INICIO && hora < BOT_HORA_FIM;
 }
 
@@ -127,6 +134,14 @@ async function verificarDisponibilidade(dataStr) {
     return { disponivel: true, tipo: "descoberto", count, limite, vagasDescoberto: limite.total - count, diaSemana };
   }
   return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto: limite.coberto - count, diaSemana };
+}
+
+async function enableForceOutsideHours(seconds = 3600) {
+  await redisSet("force:outside_hours", "1", seconds);
+}
+
+async function isForceOutsideHoursEnabled() {
+  return !!(await redisGet("force:outside_hours"));
 }
 
 async function salvarReservaNaNotion(data, instagramId) {
@@ -883,7 +898,7 @@ async function agendarFollowUp(userId) {
     const paused = await isPaused(userId);
     if (paused) return;
     if (await isGloballyPaused()) return;
-    if (!isHorarioComercial()) return;
+    if (!(await isHorarioComercial())) { return;
 
     if (await redisGet(`reserva_confirmada:${userId}`)) return;
     if (await redisGet(`humano_encerrou:${userId}`)) return;

@@ -1522,11 +1522,10 @@ app.post("/", async (req, res) => {
       if (echoRecipient && echoSender === IG_ACCOUNT_ID) {
         const echoDoBot = await redisGet(`echo_bot:${echoRecipient}`);
 
-        if (echoDoBot) {
-          await redisDel(`echo_bot:${echoRecipient}`);
-          console.log(`Echo do bot ignorado para ${echoRecipient}`);
-          return;
-        }
+       if (echoDoBot) {
+  console.log(`Echo do bot ignorado para ${echoRecipient}`);
+  return;
+}
 
         await pauseConversation(echoRecipient);
         await clearPendingMessages(echoRecipient);

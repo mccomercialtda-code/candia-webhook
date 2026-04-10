@@ -898,7 +898,7 @@ async function agendarFollowUp(userId) {
     const paused = await isPaused(userId);
     if (paused) return;
     if (await isGloballyPaused()) return;
-    if (!(await isHorarioComercial())) { return;
+    if (!(await isHorarioComercial())) return;
 
     if (await redisGet(`reserva_confirmada:${userId}`)) return;
     if (await redisGet(`humano_encerrou:${userId}`)) return;
@@ -1029,13 +1029,48 @@ if (cmd.startsWith("/reativar")) {
   return;
 }
 
+if (cmd.startsWith("/start")) {
+  const parts = raw.split(" ");
+
+  // /start 123456789 -> reativa uma conversa específica e libera fora do horário por 1h
+  if (parts.length > 1) {
+    const userId = parts[1].trim();
+
+    await limparConversaEscalada(userId);
+    await redisDel(`paused:${userId}`);
+    await redisDel(`encerrado:${userId}`);
+    await redisDel(`humano_encerrou:${userId}`);
+    await redisDel(`humano_informou:${userId}`);
+    await redisDel(`followup:${userId}`);
+    await redisDel(`debounce:${userId}`);
+
+    await enableForceOutsideHours(3600);
+
+    // se houver mensagens pendentes, dispara processamento imediato
+    const newToken = `${userId}_${Date.now()}`;
+    await setDebounceToken(userId, newToken);
+    processMessages(userId, newToken);
+
+    await notifyOwner(`▶️ Conversa ${userId} reativada e bot liberado fora do horário por 1h.`);
+    return;
+  }
+
+  // /start -> reativa global e libera fora do horário por 1h
+  await redisDel("global:paused");
+  await enableForceOutsideHours(3600);
+  await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
+  return;
+}
+  
 if (cmd === "/status") {
   const paused = await isGloballyPaused();
-  const comercial = isHorarioComercial();
+  const comercial = await isHorarioComercial();
+  const forceOutside = await isForceOutsideHoursEnabled();
+
   await notifyOwner(
     paused
       ? "⏸ Bot está PAUSADO globalmente."
-      : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}`
+      : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}${forceOutside ? " | modo forçado fora do horário ligado 🔓" : ""}`
   );
   return;
 }
@@ -1210,10 +1245,10 @@ async function processMessages(userId, myToken) {
     return;
   }
 
-  if (!isHorarioComercial()) {
-    console.log(`Fora do horário comercial — mensagens de ${userId} aguardarão até as ${BOT_HORA_INICIO}h`);
-    return;
-  }
+  if (!(await isHorarioComercial())) {
+  console.log(`Fora do horário comercial — mensagens de ${userId} aguardarão até as ${BOT_HORA_INICIO}h`);
+  return;
+}
 
   if (await isGloballyPaused()) {
     console.log(`Bot pausado globalmente — ignorando mensagem de ${userId}`);
@@ -1480,10 +1515,11 @@ async function processarFilaAcumulada() {
   }
 }
 
-function agendarVerificacaoHorario() {
-  let eraFora = !isHorarioComercial();
-  setInterval(() => {
-    const estaFora = !isHorarioComercial();
+async function agendarVerificacaoHorario() {
+  let eraFora = !(await isHorarioComercial());
+
+  setInterval(async () => {
+    const estaFora = !(await isHorarioComercial());
     if (eraFora && !estaFora) {
       console.log("Horário comercial iniciado — processando fila acumulada");
       processarFilaAcumulada().catch(err => console.error("Erro na fila acumulada:", err));
@@ -1611,7 +1647,7 @@ if (hasMedia) {
     console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
     return;
   } else {
-    if (isHorarioComercial()) {
+    if (await isHorarioComercial()) {
       await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
     }
     return;
@@ -1647,10 +1683,10 @@ if (hasMedia) {
       console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
     }
 
-    if (!isHorarioComercial()) {
-      console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
-      return;
-    }
+if (!(await isHorarioComercial())) {
+  console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
+  return;
+}
 
     const newToken = `${senderId}_${Date.now()}`;
     await setDebounceToken(senderId, newToken);

@@ -240,7 +240,7 @@ async function salvarReservaNaNotion(data, instagramId) {
   } catch (err) {
     console.error("Erro ao cancelar reserva no Notion:", err);
   }
-},
+}
       body: JSON.stringify({
         parent: { database_id: NOTION_DB_ID },
         properties
@@ -791,24 +791,18 @@ function isMensagemNova(text) {
     t.includes("tem")
   ) return true;
   return false;
-}
-function classificarIntervencaoHumana(text) {
-  if (!text) return "informou";
+function classificarMensagem(texto) {
+  if (!texto) return "informou";
 
-  const t = text.toLowerCase().trim();
+  const t = texto.toLowerCase().trim();
 
+  // 🔒 apenas sinais do CLIENTE (não do bot)
   const sinaisEncerramento = [
-    "confirmamos a reserva",
-    "confirmamos sua reserva",
-    "reserva confirmada",
-    "te aguardamos aqui",
-    "te aguardamos",
-    "fechado",
-    "combinado",
-    "nos vemos",
-    "até lá",
-    "qualquer imprevisto nos avisa",
-    "qualquer imprevisto nos avise"
+    "ok obrigado",
+    "ok obrigada",
+    "valeu",
+    "beleza",
+    "blz"
   ];
 
   for (const s of sinaisEncerramento) {
@@ -817,6 +811,7 @@ function classificarIntervencaoHumana(text) {
 
   return "informou";
 }
+
 
 async function marcarIntervencaoHumana(userId, text) {
   const tipo = classificarIntervencaoHumana(text);
@@ -926,9 +921,6 @@ async function isGloballyPaused() {
 
 async function pauseConversation(userId) {
   await redisSet(`paused:${userId}`, "1", 60 * 30); // 30 min
-
-  // ❌ REMOVIDO: não marcar como encerrado aqui
-  // await redisSet(`encerrado:${userId}`, "1", 86400 * 30);
 
   console.log(`Conversa com ${userId} pausada por 30 minutos`);
 }
@@ -1605,24 +1597,18 @@ app.post("/", async (req, res) => {
     }
 
     if (messaging?.message?.is_echo) {
-      const echoSender = messaging?.sender?.id;
-      const echoRecipient = messaging?.recipient?.id;
-      const echoText = messaging?.message?.text || "";
-
-      if (messaging?.message?.is_echo) {
-  const senderId = messaging?.sender?.id;
   const recipientId = messaging?.recipient?.id;
 
-  // 👇 se foi o próprio bot que enviou, ignora
   const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
 
+  // ✅ echo do próprio bot → ignora
   if (echoDoBot) {
     await redisDel(`echo_bot:${recipientId}`);
     console.log(`Echo do bot ignorado para ${recipientId}`);
     return;
   }
 
-  // 👇 se NÃO for echo do bot → é humano de verdade
+  // 🚨 echo que NÃO é do bot → intervenção humana real
   console.log(`Intervenção humana REAL detectada para ${recipientId}`);
 
   await pauseConversation(recipientId);
@@ -1704,6 +1690,11 @@ function detectCancelamento(text) {
 }
     }
 
+if (isOnlyPhoneNumber(message)) {
+  console.log(`Telefone detectado antes do filtro de mídia: ${message}`);
+  await redisSet(`contato_detectado:${senderId}`, message, 86400);
+}
+
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       messaging?.message?.attachments?.some(a => a.type !== "fallback")
@@ -1712,7 +1703,7 @@ function detectCancelamento(text) {
 const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
 const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
 
-if (hasMedia) {
+if (hasMedia && !isOnlyPhoneNumber(message)) {
   if (aguardandoContato || contatoDetectado) {
     console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
     return;

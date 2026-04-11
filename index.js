@@ -13,7 +13,7 @@ const NOTION_DB_ID = process.env.NOTION_DB_ID;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
-const DEBOUNCE_MS = 300000; // 5 minutos
+const DEBOUNCE_MS = 90000; // 1.5 min
 const PAUSA_INTERVENCAO_MS = 18000; // 5 horas em segundos
 const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
@@ -487,6 +487,9 @@ INTERPRETAÇÃO DE RESPOSTAS CURTAS
 - Se a última pergunta foi de confirmação, trate como confirmação positiva
 - Nunca reiniciar o fluxo ou pedir informações já solicitadas novamente
 - Geralmente respostas curtas indicam continuidade da conversa, não início de novo assunto
+- Se o cliente fizer múltiplas perguntas, responda de forma direta e objetiva, sem demora excessiva.
+- Evite respostas longas demais.
+- Após confirmar a reserva, continue respondendo normalmente caso o cliente envie novas mensagens.
 
 FUNCIONAMENTO
 - Fechado às segundas-feiras
@@ -575,6 +578,16 @@ Terça a sexta até 17h: aceitar reserva normalmente + [ESCALAR: motivo=Reserva 
 Terça a sexta após 17h: apenas ordem de chegada. Convidar a vir mesmo assim.
 Domingo até 12h: aceitar reserva normalmente + [ESCALAR: motivo=Reserva para hoje domingo — confirmar com equipe]
 Domingo após 12h: apenas ordem de chegada. Convidar a vir mesmo assim.
+
+PAGAMENTO:
+- Sexta a domingo: pagamento antecipado via fichas. Cada um paga o seu.
+- Terça a quinta: comanda individual.
+
+ALMOÇO:
+- Servido normalmente até as 15hs, de sexta a domingo.
+
+ACESSIBILIDADE:
+- Temos rampa na entrada, mas infelizmente nossos banheiros ainda não são acessíveis.
 
 FERIADOS 2026 — ESCALAR SEMPRE
 Datas que requerem verificação:
@@ -841,12 +854,13 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  await redisSet(`paused:${userId}`, "1", PAUSA_INTERVENCAO_MS);
-  // Flag encerrado: persiste além da pausa — bot só volta se cliente mandar nova mensagem após 5h
-  await redisSet(`encerrado:${userId}`, "1", 86400 * 30); // 30 dias
-  console.log(`Conversa com ${userId} pausada por 5 horas e marcada como encerrada`);
-}
+  await redisSet(`paused:${userId}`, "1", 60 * 30); // 30 min
 
+  // ❌ REMOVIDO: não marcar como encerrado aqui
+  // await redisSet(`encerrado:${userId}`, "1", 86400 * 30);
+
+  console.log(`Conversa com ${userId} pausada por 30 minutos`);
+}
 async function isEncerrado(userId) {
   const val = await redisGet(`encerrado:${userId}`);
   return !!val;

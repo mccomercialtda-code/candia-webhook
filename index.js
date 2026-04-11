@@ -126,24 +126,6 @@ async function verificarDisponibilidade(dataStr) {
   if (override === "esg") return { disponivel: false, tipo: "esgotado", override: true, diaSemana };
   if (override === "ext") return { disponivel: true, tipo: "descoberto", override: true, vagasDescoberto: 1, diaSemana };
 
-  const limite = LIMITES[diaSemana];
-  if (!limite) return { disponivel: true, tipo: "ilimitado", diaSemana };
-  const count = await contarReservasNotion(dataStr);
-  if (count >= limite.total) return { disponivel: false, tipo: "esgotado", count, limite, diaSemana };
-  if (count >= limite.coberto) {
-    return { disponivel: true, tipo: "descoberto", count, limite, vagasDescoberto: limite.total - count, diaSemana };
-  }
-  return { disponivel: true, tipo: "coberto", count, limite, vagasCoberto: limite.coberto - count, diaSemana };
-}
-
-async function enableForceOutsideHours(seconds = 3600) {
-  await redisSet("force:outside_hours", "1", seconds);
-}
-
-async function isForceOutsideHoursEnabled() {
-  return !!(await redisGet("force:outside_hours"));
-}
-
 async function salvarReservaNaNotion(data, instagramId) {
   try {
     const properties = {
@@ -170,6 +152,95 @@ async function salvarReservaNaNotion(data, instagramId) {
         "Content-Type": "application/json",
         "Notion-Version": "2022-06-28"
       },
+      body: JSON.stringify({
+        parent: { database_id: NOTION_DB_ID },
+        properties
+      })
+    });
+
+    const result = await res.json();
+
+    if (result.id) {
+      console.log("Reserva gravada no Notion:", result.id);
+    } else {
+      console.error("Erro ao gravar no Notion:", JSON.stringify(result));
+    }
+
+  } catch (err) {
+    console.error("Erro ao gravar reserva no Notion:", err);
+  }
+}
+
+  async function buscarPageIdPorInstagram(userId) {
+  try {
+    const res = await fetch("https://api.notion.com/v1/databases/" + NOTION_DB_ID + "/query", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: {
+          property: "Instagram ID",
+          rich_text: {
+            equals: userId
+          }
+        },
+        sorts: [
+          {
+            property: "Data",
+            direction: "descending"
+          }
+        ],
+        page_size: 1
+      })
+    });
+
+    const data = await res.json();
+
+    if (!data.results || data.results.length === 0) {
+      return null;
+    }
+
+    return data.results[0].id;
+
+  } catch (err) {
+    console.error("Erro ao buscar reserva no Notion:", err);
+    return null;
+  }
+}
+  
+  async function cancelarReservaNoNotion(userId) {
+  try {
+    const pageId = await buscarPageIdPorInstagram(userId);
+
+    if (!pageId) {
+      console.log(`Nenhuma reserva encontrada para ${userId}`);
+      return;
+    }
+
+    await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        properties: {
+          "Confirmado": {
+            multi_select: [{ name: "Cancelado" }]
+          }
+        }
+      })
+    });
+
+    console.log(`Reserva cancelada no Notion para ${userId}`);
+  } catch (err) {
+    console.error("Erro ao cancelar reserva no Notion:", err);
+  }
+},
       body: JSON.stringify({
         parent: { database_id: NOTION_DB_ID },
         properties
@@ -1242,53 +1313,11 @@ async function sendInstagramMessage(userId, text) {
   });
   const igData = await igRes.json();
   console.log("Resposta Graph API:", JSON.stringify(igData));
-}
-
-async function processMessages(userId, myToken) {
-  await sleep(DEBOUNCE_MS);
-
-  const currentToken = await getDebounceToken(userId);
-  console.log(`Debounce check — userId: ${userId}, myToken: ${myToken}, currentToken: ${currentToken}`);
-
-  if (currentToken !== myToken) {
-    console.log(`Debounce: nova mensagem ou intervenção para ${userId}, cancelando execução antiga`);
-    return;
-  }
-
-  if (!(await isHorarioComercial())) {
-  console.log(`Fora do horário comercial — mensagens de ${userId} aguardarão até as ${BOT_HORA_INICIO}h`);
+} async function processMessages(userId, myToken) {
   return;
 }
 
-  if (await isGloballyPaused()) {
-    console.log(`Bot pausado globalmente — ignorando mensagem de ${userId}`);
-    return;
-  }
-
-  let paused = await isPaused(userId);
-  if (paused) {
-    console.log(`Conversa com ${userId} pausada — ignorando`);
-    await clearPendingMessages(userId);
-    return;
-  }
-
-  // Se ainda está marcada como encerrada (não foi reaberta pelo cliente), não responde
-  if (await isEncerrado(userId)) {
-    console.log(`Conversa com ${userId} encerrada por humano — aguardando nova mensagem do cliente`);
-    await clearPendingMessages(userId);
-    return;
-  }
-
-  const pendingMessages = await getPendingMessages(userId);
-  if (pendingMessages.length === 0) {
-    console.log(`Nenhuma mensagem pendente para ${userId}`);
-    return;
-  }
-
-  await clearPendingMessages(userId);
-
-  const combinedMessage = pendingMessages.join("\n");
-  const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
+const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);A
   
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
@@ -1580,11 +1609,29 @@ app.post("/", async (req, res) => {
       const echoRecipient = messaging?.recipient?.id;
       const echoText = messaging?.message?.text || "";
 
-      if (echoRecipient && echoSender === IG_ACCOUNT_ID) {
-        const echoDoBot = await redisGet(`echo_bot:${echoRecipient}`);
+      if (messaging?.message?.is_echo) {
+  const senderId = messaging?.sender?.id;
+  const recipientId = messaging?.recipient?.id;
 
-       if (echoDoBot) {
-  console.log(`Echo do bot ignorado para ${echoRecipient}`);
+  // 👇 se foi o próprio bot que enviou, ignora
+  const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
+
+  if (echoDoBot) {
+    await redisDel(`echo_bot:${recipientId}`);
+    console.log(`Echo do bot ignorado para ${recipientId}`);
+    return;
+  }
+
+  // 👇 se NÃO for echo do bot → é humano de verdade
+  console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+
+  await pauseConversation(recipientId);
+  await clearPendingMessages(recipientId);
+  await redisDel(`reserva_confirmada:${recipientId}`);
+  await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
+  await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(recipientId);
+
   return;
 }
 
@@ -1614,6 +1661,21 @@ app.post("/", async (req, res) => {
       return;
     }
 
+function detectCancelamento(text) {
+  if (!text) return false;
+
+  const t = text.toLowerCase();
+
+  return (
+    t.includes("cancelar") ||
+    t.includes("cancelamento") ||
+    t.includes("não vou mais") ||
+    t.includes("nao vou mais") ||
+    t.includes("não vou conseguir") ||
+    t.includes("desmarcar")
+  );
+}
+    
     const paused = await isPaused(senderId);
     if (paused) {
       console.log(`Conversa com ${senderId} pausada — ignorando`);
@@ -1638,10 +1700,8 @@ app.post("/", async (req, res) => {
     }
 
     if (await redisGet(`reserva_confirmada:${senderId}`)) {
-      if (!isMensagemNova(message)) {
-        console.log(`Mensagem ignorada (pós-reserva) de ${senderId}: ${message}`);
-        return;
-      }
+  console.log(`Cliente ${senderId} já tem reserva — mantendo atendimento normal`);
+}
     }
 
     const hasMedia = !message && (

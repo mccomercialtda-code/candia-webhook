@@ -996,7 +996,7 @@ async function markLastReply(userId, replyText) {
 }
 
 async function salvarUltimaRespostaBot(userId, text) {
-  await redisSet(`ultima_resposta_bot:${userId}`, text, 86400);
+  await redisSet(`ultima_resposta_bot:${userId}`, text, 86400 * 7);
 }
 
 async function getUltimaRespostaBot(userId) {
@@ -1015,7 +1015,7 @@ async function getHistory(userId) {
 }
 
 async function saveHistory(userId, history) {
-  await redisSet(`hist:${userId}`, JSON.stringify(history), 86400);
+  await redisSet(`hist:${userId}`, JSON.stringify(history), 86400 * 7);
 }
 
 async function isPaused(userId) {
@@ -1046,6 +1046,9 @@ async function addPendingMessage(userId, message) {
   const messages = await getPendingMessages(userId);
   messages.push(message);
   await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400);
+  // renova TTL do histórico para que conversas que voltam no dia seguinte não percam contexto
+  const hist = await redisGet(`hist:${userId}`);
+  if (hist) await redisSet(`hist:${userId}`, hist, 86400 * 7);
 }
 
 async function clearPendingMessages(userId) {
@@ -1383,6 +1386,16 @@ async function processMessages(userId, myToken) {
     systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
   }
 
+  // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento
+  if (history.length <= 1 && await redisGet(`reserva_confirmada:${userId}`)) {
+    systemPrompt += `\nEste cliente já possui uma reserva confirmada anteriormente. Atenda normalmente — não inicie novo fluxo de reserva nem trate como primeiro contato.\n`;
+  }
+
+  // se histórico vazio e existe última resposta do bot, injeta como contexto mínimo
+  if (history.length <= 1 && ultimaRespostaBot) {
+    systemPrompt += `\nCONTEXTO DA ÚLTIMA INTERAÇÃO COM ESTE CLIENTE: a última mensagem enviada pelo bot foi: "${ultimaRespostaBot}". Use isso para dar continuidade natural à conversa, sem tratar como primeiro contato.\n`;
+  }
+
   // PONTO 8: retry na chamada ao Claude (2 tentativas com 3s de intervalo)
   let claudeData;
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
@@ -1573,9 +1586,19 @@ app.post("/", async (req, res) => {
 
       // Intervenção humana real
       console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+
+      // salva mensagem do atendente no histórico para o Claude ter contexto depois
+      const echoText = messaging?.message?.text;
+      if (echoText) {
+        const hist = await getHistory(recipientId);
+        hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
+        if (hist.length > 20) hist.splice(0, 2);
+        await saveHistory(recipientId, hist);
+        console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
+      }
+
       await pauseConversation(recipientId);
       await clearPendingMessages(recipientId);
-      await redisDel(`reserva_confirmada:${recipientId}`);
       await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
       await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
       await cancelarFollowUp(recipientId);

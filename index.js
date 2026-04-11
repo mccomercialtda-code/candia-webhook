@@ -861,10 +861,6 @@ async function pauseConversation(userId) {
 
   console.log(`Conversa com ${userId} pausada por 30 minutos`);
 }
-async function isEncerrado(userId) {
-  const val = await redisGet(`encerrado:${userId}`);
-  return !!val;
-}
 
 async function reabrirConversa(userId) {
   await redisDel(`encerrado:${userId}`);
@@ -1685,18 +1681,7 @@ if (hasMedia) {
     }
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
-    if (await isEncerrado(senderId)) {
-      if (!isMensagemNova(message)) {
-        console.log(`Mensagem ignorada (conversa encerrada) de ${senderId}: ${message}`);
-        return;
-      }
-
-      await reabrirConversa(senderId);
-      await redisDel(`humano_encerrou:${senderId}`);
-      await redisDel(`humano_informou:${senderId}`);
-      console.log(`Conversa com ${senderId} reaberta — mensagem nova`);
-    }
-
+  
 if (!(await isHorarioComercial())) {
   console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
   return;

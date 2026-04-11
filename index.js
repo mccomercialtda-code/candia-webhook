@@ -14,7 +14,6 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
 const DEBOUNCE_MS = 90000; // 1.5 min
-const PAUSA_INTERVENCAO_MS = 18000; // 5 horas em segundos
 const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
@@ -27,32 +26,12 @@ const LIMITES = {
   "domingo": { coberto: 10, descoberto: 0,  total: 10 }
 };
 
-async function isHorarioComercial() {
-  if (await isForceOutsideHoursEnabled()) {
-    return true;
-  }
-
-  const now = new Date();
-  const hora = parseInt(now.toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    hour12: false
-  }));
-
-  return hora >= BOT_HORA_INICIO && hora < BOT_HORA_FIM;
-}
+// ─── Helpers de data/hora ─────────────────────────────────────────────────────
 
 function getHoraBrasilia() {
   const now = new Date();
   return parseInt(now.toLocaleTimeString("pt-BR", {
     timeZone: "America/Sao_Paulo", hour: "2-digit", hour12: false
-  }));
-}
-
-function getMinutoBrasilia() {
-  const now = new Date();
-  return parseInt(now.toLocaleTimeString("pt-BR", {
-    timeZone: "America/Sao_Paulo", minute: "2-digit"
   }));
 }
 
@@ -92,6 +71,100 @@ function getDatePlusDaysISO(days) {
   const d = String(brt.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+
+function parseDateFromCommand(text) {
+  const match = text.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?/);
+  if (!match) return null;
+  const now = new Date();
+  const dia = match[1].padStart(2, "0");
+  const mes = match[2].padStart(2, "0");
+  const ano = match[3] || now.getFullYear().toString();
+  return `${ano}-${mes}-${dia}`;
+}
+
+function formatDateBR(isoDate) {
+  const [ano, mes, dia] = isoDate.split("-");
+  return `${dia}/${mes}/${ano}`;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ─── Redis ────────────────────────────────────────────────────────────────────
+
+async function redisGet(key) {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    if (data.result == null) return null;
+    return data.result;
+  } catch {
+    return null;
+  }
+}
+
+async function redisSet(key, value, ex = 300) {
+  try {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    const url = ex
+      ? `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}?EX=${ex}`
+      : `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`;
+    await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error(`Erro redis set ${key}:`, err);
+  }
+}
+
+async function redisDel(key) {
+  try {
+    await fetch(`${UPSTASH_URL}/del/${key}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error(`Erro redis del ${key}:`, err);
+  }
+}
+
+// ─── Horário comercial ────────────────────────────────────────────────────────
+
+async function isForceOutsideHoursEnabled() {
+  return !!(await redisGet("force_outside_hours"));
+}
+
+async function enableForceOutsideHours(seconds = 3600) {
+  await redisSet("force_outside_hours", "1", seconds);
+}
+
+async function isHorarioComercial() {
+  if (await isForceOutsideHoursEnabled()) return true;
+  const hora = getHoraBrasilia();
+  return hora >= BOT_HORA_INICIO && hora < BOT_HORA_FIM;
+}
+
+// ─── Overrides manuais ────────────────────────────────────────────────────────
+
+async function setOverride(dataISO, tipo) {
+  await redisSet(`override:${dataISO}`, tipo, 86400 * 7);
+  console.log(`Override ${tipo} setado para ${dataISO}`);
+}
+
+async function getOverride(dataISO) {
+  return await redisGet(`override:${dataISO}`);
+}
+
+async function clearOverride(dataISO) {
+  await redisDel(`override:${dataISO}`);
+  console.log(`Override removido para ${dataISO}`);
+}
+
+// ─── Disponibilidade ──────────────────────────────────────────────────────────
 
 async function contarReservasNotion(dataStr) {
   try {
@@ -144,57 +217,68 @@ async function verificarDisponibilidade(dataStr) {
   return { disponivel: true, tipo: "coberto", vagasCoberto, count, diaSemana };
 }
 
+// ─── Notion ───────────────────────────────────────────────────────────────────
+
+// PONTO 9: retry automático + notificação com dados completos em caso de falha
 async function salvarReservaNaNotion(data, instagramId) {
-  try {
-    const properties = {
-      "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
-      "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
-      "Dia": { rich_text: [{ text: { content: formatDiaNotion(data.dia, data.data) } }] },
-      "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
-      "Lugares": { number: parseInt(data.lugares) || 0 },
-      "Total esperado": { number: parseInt(data.total_esperado) || 0 },
-      "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] }
+  const properties = {
+    "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
+    "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
+    "Dia": { rich_text: [{ text: { content: formatDiaNotion(data.dia, data.data) } }] },
+    "Contato": { rich_text: [{ text: { content: data.contato || "" } }] },
+    "Lugares": { number: parseInt(data.lugares) || 0 },
+    "Total esperado": { number: parseInt(data.total_esperado) || 0 },
+    "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] }
+  };
+
+  if (data.observacao && data.observacao.trim()) {
+    properties["Observações"] = {
+      rich_text: [{ text: { content: data.observacao.trim() } }]
     };
-
-    // 👇 só adiciona Observações se tiver conteúdo
-    if (data.observacao && data.observacao.trim()) {
-      properties["Observações"] = {
-        rich_text: [{ text: { content: data.observacao.trim() } }]
-      };
-    }
-
-    const res = await fetch("https://api.notion.com/v1/pages", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${NOTION_TOKEN}`,
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-      },
-      body: JSON.stringify({
-        parent: { database_id: NOTION_DB_ID },
-        properties
-      })
-    });
-
-    const result = await res.json();
-
-    if (result.id) {
-      console.log("Reserva gravada no Notion:", result.id);
-      return true;
-    } else {
-      console.error("Erro ao gravar no Notion:", JSON.stringify(result));
-      return false;
-    }
-
-  } catch (err) {
-    console.error("Erro ao gravar reserva no Notion:", err);
-    return false;
   }
+
+  const body = JSON.stringify({ parent: { database_id: NOTION_DB_ID }, properties });
+  const headers = {
+    "Authorization": `Bearer ${NOTION_TOKEN}`,
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28"
+  };
+
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    try {
+      const res = await fetch("https://api.notion.com/v1/pages", { method: "POST", headers, body });
+      const result = await res.json();
+
+      if (result.id) {
+        console.log(`Reserva gravada no Notion (tentativa ${tentativa}):`, result.id);
+        return true;
+      }
+
+      console.error(`Erro ao gravar no Notion (tentativa ${tentativa}):`, JSON.stringify(result));
+    } catch (err) {
+      console.error(`Exceção ao gravar no Notion (tentativa ${tentativa}):`, err);
+    }
+
+    if (tentativa < 2) await sleep(3000);
+  }
+
+  // Ambas as tentativas falharam — notifica com dados completos para salvar manualmente
+  await notifyOwner(
+    `🚨 FALHA ao salvar reserva no Notion após 2 tentativas!\n` +
+    `Instagram ID: ${instagramId}\n` +
+    `Nome: ${data.aniversariante}\n` +
+    `Data: ${data.data} (${data.dia})\n` +
+    `Contato: ${data.contato}\n` +
+    `Lugares: ${data.lugares} | Total esperado: ${data.total_esperado}\n` +
+    `Obs: ${data.observacao || "—"}\n` +
+    `⚠️ Salve manualmente no Notion!`
+  );
+  return false;
 }
 
 async function buscarPageIdPorInstagram(userId) {
   try {
-    const res = await fetch("https://api.notion.com/v1/databases/" + NOTION_DB_ID + "/query", {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${NOTION_TOKEN}`,
@@ -202,45 +286,27 @@ async function buscarPageIdPorInstagram(userId) {
         "Notion-Version": "2022-06-28"
       },
       body: JSON.stringify({
-        filter: {
-          property: "Instagram ID",
-          rich_text: {
-            equals: userId
-          }
-        },
-        sorts: [
-          {
-            property: "Data",
-            direction: "descending"
-          }
-        ],
+        filter: { property: "Instagram ID", rich_text: { equals: userId } },
+        sorts: [{ property: "Data", direction: "descending" }],
         page_size: 1
       })
     });
-
     const data = await res.json();
-
-    if (!data.results || data.results.length === 0) {
-      return null;
-    }
-
+    if (!data.results || data.results.length === 0) return null;
     return data.results[0].id;
-
   } catch (err) {
     console.error("Erro ao buscar reserva no Notion:", err);
     return null;
   }
 }
-  
+
 async function cancelarReservaNoNotion(userId) {
   try {
     const pageId = await buscarPageIdPorInstagram(userId);
-
     if (!pageId) {
       console.log(`Nenhuma reserva encontrada para ${userId}`);
       return;
     }
-
     await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
       method: "PATCH",
       headers: {
@@ -249,45 +315,13 @@ async function cancelarReservaNoNotion(userId) {
         "Notion-Version": "2022-06-28"
       },
       body: JSON.stringify({
-        properties: {
-          "Confirmado": {
-            multi_select: [{ name: "Cancelado" }]
-          }
-        }
+        properties: { "Confirmado": { multi_select: [{ name: "Cancelado" }] } }
       })
     });
-
     console.log(`Reserva cancelada no Notion para ${userId}`);
   } catch (err) {
     console.error("Erro ao cancelar reserva no Notion:", err);
   }
-}
-
-// Overrides manuais via Telegram
-async function setOverride(dataISO, tipo) {
-  // tipo: "ext" (apenas externa) ou "esg" (esgotado)
-  await redisSet(`override:${dataISO}`, tipo, 86400 * 7);
-  console.log(`Override ${tipo} setado para ${dataISO}`);
-}
-
-async function getOverride(dataISO) {
-  return await redisGet(`override:${dataISO}`);
-}
-
-async function clearOverride(dataISO) {
-  await redisDel(`override:${dataISO}`);
-  console.log(`Override removido para ${dataISO}`);
-}
-async function marcarConversaEscalada(userId, motivo = "") {
-  await redisSet(`conversa_escalada:${userId}`, motivo || "1", 86400 * 2);
-}
-
-async function isConversaEscalada(userId) {
-  return !!(await redisGet(`conversa_escalada:${userId}`));
-}
-
-async function limparConversaEscalada(userId) {
-  await redisDel(`conversa_escalada:${userId}`);
 }
 
 async function buscarReservasPorData(dataISO) {
@@ -300,10 +334,7 @@ async function buscarReservasPorData(dataISO) {
         "Notion-Version": "2022-06-28"
       },
       body: JSON.stringify({
-        filter: {
-          property: "Data",
-          rich_text: { equals: dataISO }
-        }
+        filter: { property: "Data", rich_text: { equals: dataISO } }
       })
     });
     const data = await res.json();
@@ -314,42 +345,55 @@ async function buscarReservasPorData(dataISO) {
   }
 }
 
-async function buscarReservasGravatasHoje() {
-  // Busca pelo campo Data igual a hoje
+// PONTO 10: typo corrigido (buscarReservasGravatasHoje → buscarReservasGravadasHoje)
+async function buscarReservasGravadasHoje() {
   return await buscarReservasPorData(getTodayISO());
 }
 
+// PONTO 12: paginação completa — não limita a 100 registros
 async function limparReservasAntigas() {
   try {
     const hoje = getTodayISO();
-    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${NOTION_TOKEN}`,
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-      },
-      body: JSON.stringify({ page_size: 100 })
-    });
-    const data = await res.json();
-    const pages = data.results || [];
-
     let deletadas = 0;
-    for (const page of pages) {
-      const dataReserva = page.properties?.Data?.rich_text?.[0]?.text?.content || "";
-      if (dataReserva && dataReserva < hoje) {
-        await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
-          method: "PATCH",
-          headers: {
-            "Authorization": `Bearer ${NOTION_TOKEN}`,
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-          },
-          body: JSON.stringify({ archived: true })
-        });
-        deletadas++;
+    let hasMore = true;
+    let startCursor = undefined;
+
+    while (hasMore) {
+      const bodyObj = { page_size: 100 };
+      if (startCursor) bodyObj.start_cursor = startCursor;
+
+      const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${NOTION_TOKEN}`,
+          "Content-Type": "application/json",
+          "Notion-Version": "2022-06-28"
+        },
+        body: JSON.stringify(bodyObj)
+      });
+      const data = await res.json();
+      const pages = data.results || [];
+
+      for (const page of pages) {
+        const dataReserva = page.properties?.Data?.rich_text?.[0]?.text?.content || "";
+        if (dataReserva && dataReserva < hoje) {
+          await fetch(`https://api.notion.com/v1/pages/${page.id}`, {
+            method: "PATCH",
+            headers: {
+              "Authorization": `Bearer ${NOTION_TOKEN}`,
+              "Content-Type": "application/json",
+              "Notion-Version": "2022-06-28"
+            },
+            body: JSON.stringify({ archived: true })
+          });
+          deletadas++;
+        }
       }
+
+      hasMore = data.has_more || false;
+      startCursor = data.next_cursor || undefined;
     }
+
     return deletadas;
   } catch (err) {
     console.error("Erro ao limpar reservas:", err);
@@ -357,7 +401,8 @@ async function limparReservasAntigas() {
   }
 }
 
-// Envia lembretes 2 dias antes para todas as reservas do dia
+// ─── Lembretes e resumo diário ────────────────────────────────────────────────
+
 async function enviarLembretes2Dias() {
   const targetDate = getDatePlusDaysISO(2);
   console.log(`Enviando lembretes para reservas de ${targetDate}...`);
@@ -398,27 +443,22 @@ async function enviarLembretes2Dias() {
 
       const igData = await igRes.json();
 
-if (igData.error) {
-  falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
-} else {
-  console.log(`Lembrete enviado para ${nome} (${igId})`);
-
-  await fetch(`https://api.notion.com/v1/pages/${reserva.id}`, {
-    method: "PATCH",
-    headers: {
-      "Authorization": `Bearer ${NOTION_TOKEN}`,
-      "Content-Type": "application/json",
-      "Notion-Version": "2022-06-28"
-    },
-    body: JSON.stringify({
-      properties: {
-        "Confirmado": {
-          multi_select: [{ name: "Pendente" }]
-        }
+      if (igData.error) {
+        falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
+      } else {
+        console.log(`Lembrete enviado para ${nome} (${igId})`);
+        await fetch(`https://api.notion.com/v1/pages/${reserva.id}`, {
+          method: "PATCH",
+          headers: {
+            "Authorization": `Bearer ${NOTION_TOKEN}`,
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+          },
+          body: JSON.stringify({
+            properties: { "Confirmado": { multi_select: [{ name: "Pendente" }] } }
+          })
+        });
       }
-    })
-  });
-}
     } catch (err) {
       falhas.push(`${nome} (erro de rede — contato: ${contato})`);
     }
@@ -431,10 +471,9 @@ if (igData.error) {
   }
 }
 
-// Resumo diário às 22h01
 async function enviarResumoDiario() {
   console.log("Enviando resumo diário...");
-  const reservas = await buscarReservasGravatasHoje();
+  const reservas = await buscarReservasGravadasHoje(); // PONTO 10
 
   if (reservas.length === 0) {
     await notifyOwner("📋 Resumo do dia: nenhuma reserva gravada hoje.");
@@ -452,6 +491,8 @@ async function enviarResumoDiario() {
 
   await notifyOwner(`📋 Reservas gravadas hoje (${getTodayISO()}):\n${linhas.join("\n")}`);
 }
+
+// ─── Agendamentos ─────────────────────────────────────────────────────────────
 
 function agendarLimpezaSemanal() {
   function calcularProximaSegunda10h() {
@@ -485,7 +526,6 @@ function agendarLimpezaSemanal() {
   setTimeout(executarLimpeza, ms);
 }
 
-// Agenda rotinas diárias: lembretes às 9h e resumo às 22h01
 function agendarRotinasDiarias() {
   function msAteHorario(hora, minuto = 0) {
     const now = new Date();
@@ -517,6 +557,89 @@ function agendarRotinasDiarias() {
   agendarLembretes();
   agendarResumo();
 }
+
+// PONTO 11: worker periódico para follow-ups perdidos após restart do servidor
+async function verificarFollowUpsPendentes() {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/keys/followup:*`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    const keys = data.result || [];
+
+    for (const key of keys) {
+      const userId = key.replace("followup:", "");
+      const timestamp = await redisGet(`followup:${userId}`);
+      if (!timestamp) continue;
+
+      const agendadoEm = parseInt(timestamp);
+      if (Date.now() - agendadoEm < FOLLOWUP_MS) continue;
+
+      if (await isPaused(userId)) continue;
+      if (await isGloballyPaused()) continue;
+      if (!(await isHorarioComercial())) continue;
+      if (await redisGet(`reserva_confirmada:${userId}`)) continue;
+      if (await redisGet(`humano_encerrou:${userId}`)) continue;
+
+      await redisDel(`followup:${userId}`);
+
+      let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
+      if (await redisGet(`humano_informou:${userId}`)) {
+        mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
+      }
+
+      await sendInstagramMessage(userId, mensagem);
+      await salvarUltimaRespostaBot(userId, mensagem);
+      console.log(`Follow-up (worker) enviado para ${userId}`);
+    }
+  } catch (err) {
+    console.error("Erro no worker de follow-ups:", err);
+  }
+}
+
+async function agendarVerificacaoHorario() {
+  let eraFora = !(await isHorarioComercial());
+
+  setInterval(async () => {
+    const estaFora = !(await isHorarioComercial());
+    if (eraFora && !estaFora) {
+      console.log("Horário comercial iniciado — processando fila acumulada");
+      processarFilaAcumulada().catch(err => console.error("Erro na fila acumulada:", err));
+    }
+    eraFora = estaFora;
+  }, 60000);
+
+  // PONTO 11: verifica follow-ups perdidos a cada 10 minutos
+  setInterval(() => {
+    verificarFollowUpsPendentes().catch(err => console.error("Erro no worker follow-up:", err));
+  }, 10 * 60 * 1000);
+}
+
+async function processarFilaAcumulada() {
+  console.log("Verificando fila acumulada fora do horário...");
+  try {
+    const res = await fetch(`${UPSTASH_URL}/keys/pending:*`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    const keys = data.result || [];
+    for (const key of keys) {
+      const userId = key.replace("pending:", "");
+      const paused = await isPaused(userId);
+      if (!paused) {
+        const newToken = `${userId}_${Date.now()}`;
+        await setDebounceToken(userId, newToken);
+        console.log(`Reprocessando fila de ${userId}`);
+        processMessages(userId, newToken);
+        await sleep(2000);
+      }
+    }
+  } catch (err) {
+    console.error("Erro ao processar fila acumulada:", err);
+  }
+}
+
+// ─── System prompt ────────────────────────────────────────────────────────────
 
 function getSystemPrompt(disponibilidade) {
   const now = new Date();
@@ -740,83 +863,44 @@ EXEMPLOS DE TOM
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 }
 
-app.use(express.json());
+// ─── Helpers de mensagem ──────────────────────────────────────────────────────
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+app.use(express.json());
 
 function isOnlyPhoneNumber(text) {
   if (!text) return false;
-
   const lower = text.toLowerCase();
-
-  // Se claramente está informando contato
   if (
-    lower.includes("telefone") ||
-    lower.includes("contato") ||
-    lower.includes("whatsapp") ||
-    lower.includes("celular") ||
+    lower.includes("telefone") || lower.includes("contato") ||
+    lower.includes("whatsapp") || lower.includes("celular") ||
     lower.includes("meu numero")
-  ) {
-    return true;
-  }
-
-  // Remove tudo que não é número
-  const digits = text.replace(/\D/g, "");
-
-  // Detecta telefone válido (com ou sem nome junto)
-  if (digits.length >= 10 && digits.length <= 14) {
-    return true;
-  }
-
-  return false;
-
-}
-function isMensagemNova(text) {
-  if (!text) return false;
-
-  const t = text.toLowerCase().trim();
-
-  if (/\d{1,2}\/\d{1,2}/.test(t)) return true;
-
-  if (t.includes("reserva") || t.includes("mesa")) return true;
-  if (t.includes("cancelar") || t.includes("alterar")) return true;
-
-  if (
-    t.includes("horario") ||
-    t.includes("horário") ||
-    t.includes("funciona") ||
-    t.includes("abre") ||
-    t.includes("tem")
   ) return true;
-  return false;
+  const digits = text.replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 14;
 }
-function classificarMensagem(texto) {
-  if (!texto) return "informou";
 
-  const t = texto.toLowerCase().trim();
+function detectCancelamento(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return (
+    t.includes("cancelar") || t.includes("cancelamento") ||
+    t.includes("não vou mais") || t.includes("nao vou mais") ||
+    t.includes("não vou conseguir") || t.includes("desmarcar")
+  );
+}
 
-  // 🔒 apenas sinais do CLIENTE (não do bot)
-  const sinaisEncerramento = [
-    "ok obrigado",
-    "ok obrigada",
-    "valeu",
-    "beleza",
-    "blz"
-  ];
-
+function classificarIntervencaoHumana(text) {
+  if (!text) return "informou";
+  const t = text.toLowerCase().trim();
+  const sinaisEncerramento = ["ok obrigado", "ok obrigada", "valeu", "beleza", "blz"];
   for (const s of sinaisEncerramento) {
     if (t.includes(s)) return "encerrou";
   }
-
   return "informou";
 }
 
-
 async function marcarIntervencaoHumana(userId, text) {
   const tipo = classificarIntervencaoHumana(text);
-
   if (tipo === "encerrou") {
     await redisSet(`humano_encerrou:${userId}`, "1", 86400 * 7);
     await redisDel(`humano_informou:${userId}`);
@@ -825,401 +909,14 @@ async function marcarIntervencaoHumana(userId, text) {
     await redisDel(`humano_encerrou:${userId}`);
   }
 }
-async function wasMessageProcessed(messageId) {
-  return !!(await redisGet(`msg_processed:${messageId}`));
-}
 
-async function salvarUltimaRespostaBot(userId, text) {
-  await redisSet(`ultima_resposta_bot:${userId}`, text, 86400);
-}
-
-async function getUltimaRespostaBot(userId) {
-  return await redisGet(`ultima_resposta_bot:${userId}`);
-}
-
-async function markMessageProcessed(messageId) {
-  await redisSet(`msg_processed:${messageId}`, "1", 86400);
-}
-
-async function shouldSkipDuplicateReply(userId, replyText) {
-  const lastReply = await redisGet(`last_reply:${userId}`);
-  return lastReply === replyText;
-}
-
-async function markLastReply(userId, replyText) {
-  await redisSet(`last_reply:${userId}`, replyText, 15);
-}
-
-async function redisGet(key) {
-  try {
-    const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-
-    const data = await res.json();
-    if (data.result == null) return null;
-
-    return data.result;
-  } catch {
-    return null;
-  }
-}
-
-async function redisSet(key, value, ex = 300) {
-  try {
-    const serialized = typeof value === "string" ? value : JSON.stringify(value);
-
-    const url = ex
-      ? `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}?EX=${ex}`
-      : `${UPSTASH_URL}/set/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`;
-
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${UPSTASH_TOKEN}`
-      }
-    });
-  } catch (err) {
-    console.error(`Erro redis set ${key}:`, err);
-  }
-}
-
-async function redisDel(key) {
-  try {
-    await fetch(`${UPSTASH_URL}/del/${key}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-  } catch (err) {
-    console.error(`Erro redis del ${key}:`, err);
-  }
-}
-
-async function getHistory(userId) {
-  const raw = await redisGet(`hist:${userId}`);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function saveHistory(userId, history) {
-  await redisSet(`hist:${userId}`, JSON.stringify(history), 86400);
-}
-
-async function isPaused(userId) {
-  const val = await redisGet(`paused:${userId}`);
-  return !!val;
-}
-
-async function isGloballyPaused() {
-  const val = await redisGet("global:paused");
-  return !!val;
-}
-
-async function pauseConversation(userId) {
-  await redisSet(`paused:${userId}`, "1", 60 * 30); // 30 min
-
-  console.log(`Conversa com ${userId} pausada por 30 minutos`);
-}
-
-async function reabrirConversa(userId) {
-  await redisDel(`encerrado:${userId}`);
-  console.log(`Conversa com ${userId} reaberta pelo cliente`);
-}
-
-async function getPendingMessages(userId) {
-  const raw = await redisGet(`pending:${userId}`);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function addPendingMessage(userId, message) {
-  const messages = await getPendingMessages(userId);
-  messages.push(message);
-  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400);
-}
-
-async function clearPendingMessages(userId) {
-  await redisDel(`pending:${userId}`);
-}
-
-async function getDebounceToken(userId) {
-  return await redisGet(`debounce:${userId}`);
-}
-
-async function setDebounceToken(userId, token) {
-  await redisSet(`debounce:${userId}`, token, 600);
-}
-
-// Follow-up 6h após última resposta do bot sem retorno do cliente
-async function agendarFollowUp(userId) {
-  await redisSet(`followup:${userId}`, Date.now().toString(), Math.ceil(FOLLOWUP_MS / 1000) + 600);
-
-  setTimeout(async () => {
-  try {
-    const token = await redisGet(`followup:${userId}`);
-    if (!token) return;
-
-    const paused = await isPaused(userId);
-    if (paused) return;
-    if (await isGloballyPaused()) return;
-    if (!(await isHorarioComercial())) return;
-
-    if (await redisGet(`reserva_confirmada:${userId}`)) return;
-    if (await redisGet(`humano_encerrou:${userId}`)) return;
-
-    await redisDel(`followup:${userId}`);
-
-    let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
-
-    if (await redisGet(`humano_informou:${userId}`)) {
-      mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
-    }
-
-    await sendInstagramMessage(userId, mensagem);
-    await salvarUltimaRespostaBot(userId, mensagem);
-    console.log(`Follow-up enviado para ${userId}`);
-  } catch (err) {
-    console.error(`Erro no follow-up de ${userId}:`, err);
-  }
-}, FOLLOWUP_MS);
-}
-
-async function cancelarFollowUp(userId) {
-  await redisDel(`followup:${userId}`);
-}
-
-async function notifyOwner(message) {
-  try {
-    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
-        text: message
-      })
-    });
-    console.log("Notificado no Telegram!");
-  } catch (err) {
-    console.error("Erro ao notificar no Telegram:", err);
-  }
-}
-
-function parseDateFromCommand(text) {
-  // Extrai DD/MM ou DD/MM/AAAA do texto do comando
-  const match = text.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?/);
-  if (!match) return null;
-  const now = new Date();
-  const dia = match[1].padStart(2, "0");
-  const mes = match[2].padStart(2, "0");
-  const ano = match[3] || now.getFullYear().toString();
-  return `${ano}-${mes}-${dia}`; // ISO para o Redis
-}
-
-function formatDateBR(isoDate) {
-  const [ano, mes, dia] = isoDate.split("-");
-  return `${dia}/${mes}/${ano}`;
-}
-
-async function handleTelegramCommand(text) {
-  const raw = text.trim();
-  const cmd = raw.toLowerCase();
-
- // /Ex DD/MM → força área externa
-if (raw.toLowerCase().startsWith("/ex ")) {
-  const dataISO = parseDateFromCommand(raw.slice(4).trim());
-  if (!dataISO) {
-    await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04");
-    return;
-  }
-  await setOverride(dataISO, "ext");
-  await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
-  return;
-}
-
-// /E DD/MM → força esgotado
-if (raw.toLowerCase().startsWith("/e ")) {
-  const dataISO = parseDateFromCommand(raw.slice(3).trim());
-  if (!dataISO) {
-    await notifyOwner("⚠️ Data inválida. Use: /E 11/04");
-    return;
-  }
-  await setOverride(dataISO, "esg");
-  await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
-  return;
-}
-if (cmd.startsWith("/liberar ")) {
-  const userId = raw.split(" ")[1]?.trim();
-
-  if (!userId) {
-    await notifyOwner("⚠️ Use: /liberar USER_ID");
-    return;
-  }
-
-  await redisDel(`paused:${userId}`);
-  await redisDel(`encerrado:${userId}`);
-  await redisDel(`humano_encerrou:${userId}`);
-  await redisDel(`humano_informou:${userId}`);
-  await redisDel(`followup:${userId}`);
-  await redisDel(`debounce:${userId}`);
-  await redisDel(`pending:${userId}`);
-
-  await notifyOwner(`✅ Usuário liberado: ${userId}`);
-  return;
-}
-
-if (cmd === "/pausar") {
-  await redisSet("global:paused", "1", 86400 * 7);
-  await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
-  return;
-}
-
-if (cmd.startsWith("/reativar")) {
-  const parts = raw.split(" ");
-
-  // Se vier com ID → reativa conversa específica
-  if (parts.length > 1) {
-    const userId = parts[1].trim();
-
-    await limparConversaEscalada(userId);
-    await redisDel(`paused:${userId}`);
-
-    await notifyOwner(`▶️ Conversa ${userId} reativada!`);
-    return;
-  }
-
-  // Sem ID → reativa global
-  await redisDel("global:paused");
-  await notifyOwner("▶️ Bot reativado globalmente!");
-  return;
-}
-
-if (cmd.startsWith("/start")) {
-  const parts = raw.split(" ");
-
-  // /start 123456789 -> reativa uma conversa específica e libera fora do horário por 1h
-  if (parts.length > 1) {
-    const userId = parts[1].trim();
-
-    await limparConversaEscalada(userId);
-    await redisDel(`paused:${userId}`);
-    await redisDel(`encerrado:${userId}`);
-    await redisDel(`humano_encerrou:${userId}`);
-    await redisDel(`humano_informou:${userId}`);
-    await redisDel(`followup:${userId}`);
-    await redisDel(`debounce:${userId}`);
-
-    await enableForceOutsideHours(3600);
-
-    // se houver mensagens pendentes, dispara processamento imediato
-    const newToken = `${userId}_${Date.now()}`;
-    await setDebounceToken(userId, newToken);
-    processMessages(userId, newToken);
-
-    await notifyOwner(`▶️ Conversa ${userId} reativada e bot liberado fora do horário por 1h.`);
-    return;
-  }
-
-  // /start -> reativa global e libera fora do horário por 1h
-  await redisDel("global:paused");
-  await enableForceOutsideHours(3600);
-  await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
-  return;
-}
-  
-if (cmd === "/status") {
-  const paused = await isGloballyPaused();
-  const comercial = await isHorarioComercial();
-  const forceOutside = await isForceOutsideHoursEnabled();
-
-  await notifyOwner(
-    paused
-      ? "⏸ Bot está PAUSADO globalmente."
-      : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}${forceOutside ? " | modo forçado fora do horário ligado 🔓" : ""}`
-  );
-  return;
-}
-
-if (cmd.startsWith("/limpar ")) {
-  const dataISO = parseDateFromCommand(cmd.slice(8));
-  if (!dataISO) {
-    await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04");
-    return;
-  }
-  await clearOverride(dataISO);
-  await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
-  return;
-}
-
-if (cmd === "/limpar") {
-  await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
-  try {
-    const n = await limparReservasAntigas();
-    await notifyOwner(`✅ Limpeza concluída: ${n} reserva(s) antiga(s) removida(s).`);
-  } catch (err) {
-    await notifyOwner(`⚠️ Erro na limpeza: ${err.message}`);
-  }
-  return;
-}
-
-if (cmd.startsWith("/status ")) {
-  const dataISO = parseDateFromCommand(cmd.slice(8));
-  if (!dataISO) {
-    await notifyOwner("⚠️ Data inválida. Use: /status 11/04");
-    return;
-  }
-
-  const override = await getOverride(dataISO);
-  const disp = await verificarDisponibilidade(
-    formatDateBR(dataISO).replace(/\/(\d{4})$/, "").split("/").map((v, i) => i === 2 ? v : v).join("/") + "/" + dataISO.split("-")[0]
-  );
-
-  let msg = `📅 Status ${formatDateBR(dataISO)}:\n`;
-  if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
-  msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
-
-  await notifyOwner(msg);
-  return;
-}
-
-if (cmd === "/help") {
-  await notifyOwner(
-`📋 Comandos disponíveis:
-
-/Ex DD/MM — Força área EXTERNA para uma data
-Ex: /Ex 11/04
-
-/E DD/MM — Força ESGOTADO para uma data
-Ex: /E 11/04
-
-/liberar USER_ID — destrava manualmente um cliente
-Ex: /liberar 1604246050664169
-
-/limpar DD/MM — Remove override de uma data
-Ex: /limpar 11/04
-
-/limpar — Apaga reservas antigas do Notion
-
-/status DD/MM — Mostra disponibilidade de uma data
-Ex: /status 11/04
-
-/status — Mostra se o bot está ativo ou pausado
-
-/pausar — Pausa o bot globalmente
-/reativar — Reativa o bot
-/help — Mostra esta lista`
-  );
-  return;
-}
+function respostaContemInfoReserva(text) {
+  const keywords = [
+    "reserva", "mesa", "lugares", "segurar", "15h", "19h", "14h",
+    "podemos seguir", "formato", "disponível", "disponibilidade"
+  ];
+  const lower = text.toLowerCase();
+  return keywords.some(k => lower.includes(k));
 }
 
 function extractReservation(text) {
@@ -1275,22 +972,311 @@ function extractExplicitDates(text) {
 }
 
 function extractDatesFromConversation(currentMessage, history) {
-  const allText = [
-    currentMessage,
-    ...history.map(h => h.content || "")
-  ].join("\n");
+  const allText = [currentMessage, ...history.map(h => h.content || "")].join("\n");
   return extractExplicitDates(allText);
 }
 
-// Detecta se a resposta do bot contém informações sobre reserva (para agendar follow-up)
-function respostaContemInfoReserva(text) {
-  const keywords = [
-    "reserva", "mesa", "lugares", "segurar", "15h", "19h", "14h",
-    "podemos seguir", "formato", "disponível", "disponibilidade"
-  ];
-  const lower = text.toLowerCase();
-  return keywords.some(k => lower.includes(k));
+// ─── Estado da conversa ───────────────────────────────────────────────────────
+
+async function wasMessageProcessed(messageId) {
+  return !!(await redisGet(`msg_processed:${messageId}`));
 }
+
+async function markMessageProcessed(messageId) {
+  await redisSet(`msg_processed:${messageId}`, "1", 86400);
+}
+
+async function shouldSkipDuplicateReply(userId, replyText) {
+  const lastReply = await redisGet(`last_reply:${userId}`);
+  return lastReply === replyText;
+}
+
+async function markLastReply(userId, replyText) {
+  await redisSet(`last_reply:${userId}`, replyText, 15);
+}
+
+async function salvarUltimaRespostaBot(userId, text) {
+  await redisSet(`ultima_resposta_bot:${userId}`, text, 86400);
+}
+
+async function getUltimaRespostaBot(userId) {
+  return await redisGet(`ultima_resposta_bot:${userId}`);
+}
+
+async function getHistory(userId) {
+  const raw = await redisGet(`hist:${userId}`);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveHistory(userId, history) {
+  await redisSet(`hist:${userId}`, JSON.stringify(history), 86400);
+}
+
+async function isPaused(userId) {
+  return !!(await redisGet(`paused:${userId}`));
+}
+
+async function isGloballyPaused() {
+  return !!(await redisGet("global:paused"));
+}
+
+async function pauseConversation(userId) {
+  await redisSet(`paused:${userId}`, "1", 60 * 30); // 30 min
+  console.log(`Conversa com ${userId} pausada por 30 minutos`);
+}
+
+async function getPendingMessages(userId) {
+  const raw = await redisGet(`pending:${userId}`);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function addPendingMessage(userId, message) {
+  const messages = await getPendingMessages(userId);
+  messages.push(message);
+  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400);
+}
+
+async function clearPendingMessages(userId) {
+  await redisDel(`pending:${userId}`);
+}
+
+async function getDebounceToken(userId) {
+  return await redisGet(`debounce:${userId}`);
+}
+
+async function setDebounceToken(userId, token) {
+  await redisSet(`debounce:${userId}`, token, 600);
+}
+
+async function marcarConversaEscalada(userId, motivo = "") {
+  await redisSet(`conversa_escalada:${userId}`, motivo || "1", 86400 * 2);
+}
+
+async function isConversaEscalada(userId) {
+  return !!(await redisGet(`conversa_escalada:${userId}`));
+}
+
+async function limparConversaEscalada(userId) {
+  await redisDel(`conversa_escalada:${userId}`);
+}
+
+// PONTO 11: follow-up salvo no Redis como fonte de verdade; setTimeout é fallback
+async function agendarFollowUp(userId) {
+  await redisSet(`followup:${userId}`, Date.now().toString(), Math.ceil(FOLLOWUP_MS / 1000) + 600);
+
+  setTimeout(async () => {
+    try {
+      const token = await redisGet(`followup:${userId}`);
+      if (!token) return;
+
+      if (await isPaused(userId)) return;
+      if (await isGloballyPaused()) return;
+      if (!(await isHorarioComercial())) return;
+      if (await redisGet(`reserva_confirmada:${userId}`)) return;
+      if (await redisGet(`humano_encerrou:${userId}`)) return;
+
+      await redisDel(`followup:${userId}`);
+
+      let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
+      if (await redisGet(`humano_informou:${userId}`)) {
+        mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
+      }
+
+      await sendInstagramMessage(userId, mensagem);
+      await salvarUltimaRespostaBot(userId, mensagem);
+      console.log(`Follow-up (setTimeout) enviado para ${userId}`);
+    } catch (err) {
+      console.error(`Erro no follow-up de ${userId}:`, err);
+    }
+  }, FOLLOWUP_MS);
+}
+
+async function cancelarFollowUp(userId) {
+  await redisDel(`followup:${userId}`);
+}
+
+// ─── Telegram ─────────────────────────────────────────────────────────────────
+
+async function notifyOwner(message) {
+  try {
+    await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message })
+    });
+    console.log("Notificado no Telegram!");
+  } catch (err) {
+    console.error("Erro ao notificar no Telegram:", err);
+  }
+}
+
+async function handleTelegramCommand(text) {
+  const raw = text.trim();
+  const cmd = raw.toLowerCase();
+
+  // /Ex DD/MM → força área externa
+  if (raw.toLowerCase().startsWith("/ex ")) {
+    const dataISO = parseDateFromCommand(raw.slice(4).trim());
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04"); return; }
+    await setOverride(dataISO, "ext");
+    await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
+    return;
+  }
+
+  // /E DD/MM → força esgotado
+  if (raw.toLowerCase().startsWith("/e ")) {
+    const dataISO = parseDateFromCommand(raw.slice(3).trim());
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /E 11/04"); return; }
+    await setOverride(dataISO, "esg");
+    await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
+    return;
+  }
+
+  if (cmd.startsWith("/liberar ")) {
+    const userId = raw.split(" ")[1]?.trim();
+    if (!userId) { await notifyOwner("⚠️ Use: /liberar USER_ID"); return; }
+    await redisDel(`paused:${userId}`);
+    await redisDel(`humano_encerrou:${userId}`);
+    await redisDel(`humano_informou:${userId}`);
+    await redisDel(`followup:${userId}`);
+    await redisDel(`debounce:${userId}`);
+    await redisDel(`pending:${userId}`);
+    await notifyOwner(`✅ Usuário liberado: ${userId}`);
+    return;
+  }
+
+  if (cmd === "/pausar") {
+    await redisSet("global:paused", "1", 86400 * 7);
+    await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
+    return;
+  }
+
+  if (cmd.startsWith("/reativar")) {
+    const parts = raw.split(" ");
+    if (parts.length > 1) {
+      const userId = parts[1].trim();
+      await limparConversaEscalada(userId);
+      await redisDel(`paused:${userId}`);
+      await notifyOwner(`▶️ Conversa ${userId} reativada!`);
+      return;
+    }
+    await redisDel("global:paused");
+    await notifyOwner("▶️ Bot reativado globalmente!");
+    return;
+  }
+
+  if (cmd.startsWith("/start")) {
+    const parts = raw.split(" ");
+    if (parts.length > 1) {
+      const userId = parts[1].trim();
+      await limparConversaEscalada(userId);
+      await redisDel(`paused:${userId}`);
+      await redisDel(`humano_encerrou:${userId}`);
+      await redisDel(`humano_informou:${userId}`);
+      await redisDel(`followup:${userId}`);
+      await redisDel(`debounce:${userId}`);
+      await enableForceOutsideHours(3600);
+      const newToken = `${userId}_${Date.now()}`;
+      await setDebounceToken(userId, newToken);
+      processMessages(userId, newToken);
+      await notifyOwner(`▶️ Conversa ${userId} reativada e bot liberado fora do horário por 1h.`);
+      return;
+    }
+    await redisDel("global:paused");
+    await enableForceOutsideHours(3600);
+    await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
+    return;
+  }
+
+  if (cmd === "/status") {
+    const paused = await isGloballyPaused();
+    const comercial = await isHorarioComercial();
+    const forceOutside = await isForceOutsideHoursEnabled();
+    await notifyOwner(
+      paused
+        ? "⏸ Bot está PAUSADO globalmente."
+        : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}${forceOutside ? " | modo forçado fora do horário ligado 🔓" : ""}`
+    );
+    return;
+  }
+
+  if (cmd.startsWith("/limpar ")) {
+    const dataISO = parseDateFromCommand(cmd.slice(8));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04"); return; }
+    await clearOverride(dataISO);
+    await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
+    return;
+  }
+
+  if (cmd === "/limpar") {
+    await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
+    try {
+      const n = await limparReservasAntigas();
+      await notifyOwner(`✅ Limpeza concluída: ${n} reserva(s) antiga(s) removida(s).`);
+    } catch (err) {
+      await notifyOwner(`⚠️ Erro na limpeza: ${err.message}`);
+    }
+    return;
+  }
+
+  if (cmd.startsWith("/status ")) {
+    const dataISO = parseDateFromCommand(cmd.slice(8));
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /status 11/04"); return; }
+    const override = await getOverride(dataISO);
+    const disp = await verificarDisponibilidade(
+      formatDateBR(dataISO).replace(/\/(\d{4})$/, "").split("/").map((v, i) => i === 2 ? v : v).join("/") + "/" + dataISO.split("-")[0]
+    );
+    let msg = `📅 Status ${formatDateBR(dataISO)}:\n`;
+    if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
+    msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
+    await notifyOwner(msg);
+    return;
+  }
+
+  if (cmd === "/help") {
+    await notifyOwner(
+`📋 Comandos disponíveis:
+
+/Ex DD/MM — Força área EXTERNA para uma data
+Ex: /Ex 11/04
+
+/E DD/MM — Força ESGOTADO para uma data
+Ex: /E 11/04
+
+/liberar USER_ID — destrava manualmente um cliente
+Ex: /liberar 1604246050664169
+
+/limpar DD/MM — Remove override de uma data
+Ex: /limpar 11/04
+
+/limpar — Apaga reservas antigas do Notion
+
+/status DD/MM — Mostra disponibilidade de uma data
+Ex: /status 11/04
+
+/status — Mostra se o bot está ativo ou pausado
+
+/pausar — Pausa o bot globalmente
+/reativar — Reativa o bot
+/help — Mostra esta lista`
+    );
+    return;
+  }
+}
+
+// ─── Instagram ────────────────────────────────────────────────────────────────
 
 async function sendInstagramMessage(userId, text) {
   const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
@@ -1306,7 +1292,18 @@ async function sendInstagramMessage(userId, text) {
   });
   const igData = await igRes.json();
   console.log("Resposta Graph API:", JSON.stringify(igData));
-} async function processMessages(userId, myToken) {
+}
+
+// ─── Processamento de mensagens ───────────────────────────────────────────────
+
+async function processMessages(userId, myToken) {
+  // PONTO 5: verifica token ANTES do sleep para evitar trabalho desnecessário
+  const tokenAntes = await getDebounceToken(userId);
+  if (tokenAntes !== myToken) {
+    console.log(`Token cancelado para ${userId} antes do debounce — abortando`);
+    return;
+  }
+
   await sleep(DEBOUNCE_MS);
 
   const currentToken = await getDebounceToken(userId);
@@ -1333,12 +1330,13 @@ async function sendInstagramMessage(userId, text) {
   }
 
   await clearPendingMessages(userId);
-  const combinedMessage = pendingMessages.join("\n");
+
+  // PONTO 6: separador explícito entre mensagens acumuladas
+  const combinedMessage = pendingMessages.join(" | ");
   const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
-  
+
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
 
-  // Cancela follow-up pendente pois o cliente respondeu
   await cancelarFollowUp(userId);
 
   const history = await getHistory(userId);
@@ -1368,80 +1366,68 @@ async function sendInstagramMessage(userId, text) {
     return;
   }
 
-  let reply;
+  let systemPrompt = getSystemPrompt(disponibilidadeInfo || null);
 
-let systemPrompt = getSystemPrompt(disponibilidadeInfo || null);
-
-const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
-
-if (contatoDetectado) {
-  systemPrompt += `\nCONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}\n`;
-  systemPrompt += `\nIMPORTANTE: se o único dado que faltava para concluir a reserva era o contato, considere este contato como válido e prossiga para a confirmação final da reserva. Nesse caso, NÃO peça o contato novamente. Gere a resposta final de confirmação e inclua o bloco [RESERVA: ...] completo com esse contato.\n`;
-}
-
-// 👇 NOVO BLOCO
-if (mensagemEhSoContato) {
-  systemPrompt += `\nA MENSAGEM ATUAL DO CLIENTE É APENAS O CONTATO. Se já houver contexto suficiente da reserva nas mensagens anteriores, conclua a reserva agora. NÃO trate esta mensagem como novo assunto. NÃO peça o contato novamente.\n`;
-}
-
-const ultimaRespostaBot = await getUltimaRespostaBot(userId);
-if (ultimaRespostaBot) {
-  systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
-}
-
-let claudeData;
-
-try {
-  const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": CLAUDE_API_KEY,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: history
-    })
-  });
-
-  claudeData = await claudeRes.json();
-
-  if (claudeData.error) {
-    console.error("Erro da API Claude:", claudeData.error);
-    await notifyOwner(
-      `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
-    );
-    return;
+  const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
+  if (contatoDetectado) {
+    systemPrompt += `\nCONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}\n`;
+    systemPrompt += `\nIMPORTANTE: se o único dado que faltava para concluir a reserva era o contato, considere este contato como válido e prossiga para a confirmação final da reserva. Nesse caso, NÃO peça o contato novamente. Gere a resposta final de confirmação e inclua o bloco [RESERVA: ...] completo com esse contato.\n`;
   }
 
-} catch (err) {
-  console.error("Erro ao chamar a API Claude:", err);
-  await notifyOwner(
-    `⚠️ Erro ao chamar a API Claude.\nCliente ID: ${userId}\nErro: ${err.message || err}`
-  );
-  return;
-}
+  if (mensagemEhSoContato) {
+    systemPrompt += `\nA MENSAGEM ATUAL DO CLIENTE É APENAS O CONTATO. Se já houver contexto suficiente da reserva nas mensagens anteriores, conclua a reserva agora. NÃO trate esta mensagem como novo assunto. NÃO peça o contato novamente.\n`;
+  }
 
-reply = claudeData.content?.[0]?.text;
+  const ultimaRespostaBot = await getUltimaRespostaBot(userId);
+  if (ultimaRespostaBot) {
+    systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
+  }
 
-const escalarMatch = reply?.match(/\[ESCALAR:\s*motivo=(.*?)\]/i);
+  // PONTO 8: retry na chamada ao Claude (2 tentativas com 3s de intervalo)
+  let claudeData;
+  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+    try {
+      const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": CLAUDE_API_KEY,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: history
+        })
+      });
 
-if (escalarMatch) {
-  const motivoEscalada = escalarMatch[1]?.trim() || "Sem motivo informado";
+      claudeData = await claudeRes.json();
 
-  await notifyOwner(`⚠️ Escalonar conversa com ${userId}\nMotivo: ${motivoEscalada}`);
-  await marcarConversaEscalada(userId, motivoEscalada);
-  await clearPendingMessages(userId);
-  await setDebounceToken(userId, `cancelled_${Date.now()}`);
-  await cancelarFollowUp(userId);
+      if (claudeData.error) {
+        console.error(`Erro da API Claude (tentativa ${tentativa}):`, claudeData.error);
+        if (tentativa === 2) {
+          await notifyOwner(
+            `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
+          );
+          return;
+        }
+        await sleep(3000);
+        continue;
+      }
 
-  console.log(`Conversa ${userId} marcada como escalada.`);
+      break; // sucesso
+    } catch (err) {
+      console.error(`Exceção ao chamar a API Claude (tentativa ${tentativa}):`, err);
+      if (tentativa === 2) {
+        await notifyOwner(`⚠️ Erro ao chamar a API Claude.\nCliente ID: ${userId}\nErro: ${err.message || err}`);
+        return;
+      }
+      await sleep(3000);
+    }
+  }
 
-  reply = reply.replace(/\[ESCALAR:\s*motivo=.*?\]/i, "").trim();
-}
+  let reply = claudeData.content?.[0]?.text;
 
   if (!reply) {
     console.error("Resposta vazia do Claude");
@@ -1449,10 +1435,21 @@ if (escalarMatch) {
     return;
   }
 
+  // Escalação embutida na resposta
+  const escalarMatch = reply.match(/\[ESCALAR:\s*motivo=(.*?)\]/i);
+  if (escalarMatch) {
+    const motivoEscalada = escalarMatch[1]?.trim() || "Sem motivo informado";
+    await notifyOwner(`⚠️ Escalonar conversa com ${userId}\nMotivo: ${motivoEscalada}`);
+    await marcarConversaEscalada(userId, motivoEscalada);
+    await clearPendingMessages(userId);
+    await setDebounceToken(userId, `cancelled_${Date.now()}`);
+    await cancelarFollowUp(userId);
+    console.log(`Conversa ${userId} marcada como escalada.`);
+    reply = reply.replace(/\[ESCALAR:\s*motivo=.*?\]/i, "").trim();
+  }
+
   console.log("Resposta Claude:", reply);
 
-  // Verificação final: checar pausa E token antes de enviar
-  // O echo da intervenção humana pode ter chegado durante a chamada ao Claude
   paused = await isPaused(userId);
   if (paused) {
     console.log(`Conversa com ${userId} pausada após Claude — cancelando envio`);
@@ -1461,159 +1458,73 @@ if (escalarMatch) {
 
   const finalToken = await getDebounceToken(userId);
   if (finalToken !== myToken) {
-    console.log(`Token cancelado para ${userId} durante chamada ao Claude — intervenção humana detectada, cancelando envio`);
+    console.log(`Token cancelado para ${userId} durante chamada ao Claude — cancelando envio`);
     return;
   }
 
   history.push({ role: "assistant", content: reply });
-await saveHistory(userId, history);
+  await saveHistory(userId, history);
 
-const reservation = extractReservation(reply);
-
-if (reservation) {
-  const salvou = await salvarReservaNaNotion(reservation, userId);
-
-  if (salvou) {
-    await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
-    await clearPendingMessages(userId);
-
-    // limpa estados temporários do fluxo de reserva
-    await redisDel(`aguardando_contato:${userId}`);
-    await redisDel(`contato_detectado:${userId}`);
-
-    console.log(`Reserva concluída e estados limpos para ${userId}`);
-  } else {
-    console.log(`⚠️ Falha ao salvar reserva para ${userId} — mantendo estado para nova tentativa`);
-  }
-}
-
-const escalation = extractEscalation(reply);
-if (escalation) {
-  await notifyOwner(
-    `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
-  );
-}
-const cleanReply = reply
-  .replace(/\[RESERVA:.*?\]/gs, "")
-  .replace(/\[ESCALAR:.*?\]/gs, "")
-  .trim();
-
-// 🚫 evita envio duplicado
-if (await shouldSkipDuplicateReply(userId, cleanReply)) {
-  console.log(`Resposta duplicada ignorada para ${userId}`);
-  return;
-}
-
-// Se a resposta estiver pedindo os dados finais da reserva,
-// marca que estamos aguardando telefone/contato do cliente
-const replyLower = cleanReply.toLowerCase();
-
-const pedindoDadosReserva =
-  (
-    replyLower.includes("telefone") ||
-    replyLower.includes("contato")
-  ) &&
-  (
-    replyLower.includes("previsão total") ||
-    replyLower.includes("previsao total") ||
-    replyLower.includes("total de pessoas") ||
-    replyLower.includes("quantas pessoas") ||
-    replyLower.includes("previsão de pessoas") ||
-    replyLower.includes("previsao de pessoas")
-  );
-
-if (pedindoDadosReserva) {
-  await redisSet(`aguardando_contato:${userId}`, "1", 600);
-  console.log(`Bot está aguardando telefone/previsão de pessoas de ${userId}`);
-}
-
-// 🧠 marca última resposta
-await markLastReply(userId, cleanReply);
-
-// 🤖 marca que o próximo echo é do bot
-await redisSet(`echo_bot:${userId}`, "1", 30);
-
-// 📩 envia mensagem
-await sendInstagramMessage(userId, cleanReply);
-await salvarUltimaRespostaBot(userId, cleanReply);
-
-// Agenda follow-up se a resposta contiver informações sobre reserva e não for uma confirmação
-const isConfirmacao = !!reservation;
-const isEscalacao = !!escalation;
-
-if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
-  await agendarFollowUp(userId);
- console.log(`Follow-up agendado para ${userId} em 6h`);
-}
-}
-
-async function processarFilaAcumulada() {
-  console.log("Verificando fila acumulada fora do horário...");
-  try {
-    const res = await fetch(`${UPSTASH_URL}/keys/pending:*`, {
-      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-    });
-    const data = await res.json();
-    const keys = data.result || [];
-    for (const key of keys) {
-      const userId = key.replace("pending:", "");
-      const paused = await isPaused(userId);
-      if (!paused) {
-        const newToken = `${userId}_${Date.now()}`;
-        await setDebounceToken(userId, newToken);
-        console.log(`Reprocessando fila de ${userId}`);
-        processMessages(userId, newToken);
-        await sleep(2000);
-      }
+  const reservation = extractReservation(reply);
+  if (reservation) {
+    const salvou = await salvarReservaNaNotion(reservation, userId);
+    if (salvou) {
+      await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+      await clearPendingMessages(userId);
+      await redisDel(`aguardando_contato:${userId}`);
+      await redisDel(`contato_detectado:${userId}`);
+      console.log(`Reserva concluída e estados limpos para ${userId}`);
+    } else {
+      console.log(`⚠️ Falha ao salvar reserva para ${userId} — owner notificado`);
     }
-  } catch (err) {
-    console.error("Erro ao processar fila acumulada:", err);
+  }
+
+  const escalation = extractEscalation(reply);
+  if (escalation) {
+    await notifyOwner(
+      `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
+    );
+  }
+
+  const cleanReply = reply
+    .replace(/\[RESERVA:.*?\]/gs, "")
+    .replace(/\[ESCALAR:.*?\]/gs, "")
+    .trim();
+
+  if (await shouldSkipDuplicateReply(userId, cleanReply)) {
+    console.log(`Resposta duplicada ignorada para ${userId}`);
+    return;
+  }
+
+  const replyLower = cleanReply.toLowerCase();
+  const pedindoDadosReserva =
+    (replyLower.includes("telefone") || replyLower.includes("contato")) &&
+    (
+      replyLower.includes("previsão total") || replyLower.includes("previsao total") ||
+      replyLower.includes("total de pessoas") || replyLower.includes("quantas pessoas") ||
+      replyLower.includes("previsão de pessoas") || replyLower.includes("previsao de pessoas")
+    );
+
+  if (pedindoDadosReserva) {
+    await redisSet(`aguardando_contato:${userId}`, "1", 600);
+    console.log(`Bot está aguardando telefone/previsão de pessoas de ${userId}`);
+  }
+
+  await markLastReply(userId, cleanReply);
+  await redisSet(`echo_bot:${userId}`, "1", 30);
+  await sendInstagramMessage(userId, cleanReply);
+  await salvarUltimaRespostaBot(userId, cleanReply);
+
+  const isConfirmacao = !!reservation;
+  const isEscalacao = !!escalation;
+
+  if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
+    await agendarFollowUp(userId);
+    console.log(`Follow-up agendado para ${userId} em 6h`);
   }
 }
 
-async function agendarVerificacaoHorario() {
-  let eraFora = !(await isHorarioComercial());
-
-  setInterval(async () => {
-    const estaFora = !(await isHorarioComercial());
-    if (eraFora && !estaFora) {
-      console.log("Horário comercial iniciado — processando fila acumulada");
-      processarFilaAcumulada().catch(err => console.error("Erro na fila acumulada:", err));
-    }
-    eraFora = estaFora;
-  }, 60000);
-}
-
-async function isForceOutsideHoursEnabled() {
-  return !!(await redisGet("force_outside_hours"));
-}
-
-async function enableForceOutsideHours(seconds = 3600) {
-  await redisSet("force_outside_hours", "1", seconds);
-}
-
-function classificarIntervencaoHumana(text) {
-  if (!text) return "informou";
-  const t = text.toLowerCase().trim();
-  const sinaisEncerramento = ["ok obrigado", "ok obrigada", "valeu", "beleza", "blz"];
-  for (const s of sinaisEncerramento) {
-    if (t.includes(s)) return "encerrou";
-  }
-  return "informou";
-}
-
-function detectCancelamento(text) {
-  if (!text) return false;
-  const t = text.toLowerCase();
-  return (
-    t.includes("cancelar") ||
-    t.includes("cancelamento") ||
-    t.includes("não vou mais") ||
-    t.includes("nao vou mais") ||
-    t.includes("não vou conseguir") ||
-    t.includes("desmarcar")
-  );
-}
+// ─── Rotas Express ────────────────────────────────────────────────────────────
 
 app.get("/", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -1648,34 +1559,28 @@ app.post("/", async (req, res) => {
     const entry = req.body?.entry?.[0];
     const messaging = entry?.messaging?.[0];
 
-    if (messaging?.read || messaging?.delivery || messaging?.message_edit) {
-      return;
-    }
+    if (messaging?.read || messaging?.delivery || messaging?.message_edit) return;
 
     if (messaging?.message?.is_echo) {
-  const recipientId = messaging?.recipient?.id;
+      const recipientId = messaging?.recipient?.id;
+      const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
 
-  const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
+      if (echoDoBot) {
+        await redisDel(`echo_bot:${recipientId}`);
+        console.log(`Echo do bot ignorado para ${recipientId}`);
+        return;
+      }
 
-  // ✅ echo do próprio bot → ignora
-  if (echoDoBot) {
-    await redisDel(`echo_bot:${recipientId}`);
-    console.log(`Echo do bot ignorado para ${recipientId}`);
-    return;
-  }
-
-  // 🚨 echo que NÃO é do bot → intervenção humana real
-  console.log(`Intervenção humana REAL detectada para ${recipientId}`);
-
-  await pauseConversation(recipientId);
-  await clearPendingMessages(recipientId);
-  await redisDel(`reserva_confirmada:${recipientId}`);
-  await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
-  await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
-  await cancelarFollowUp(recipientId);
-
-  return;
-}
+      // Intervenção humana real
+      console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+      await pauseConversation(recipientId);
+      await clearPendingMessages(recipientId);
+      await redisDel(`reserva_confirmada:${recipientId}`);
+      await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
+      await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
+      await cancelarFollowUp(recipientId);
+      return;
+    }
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;
@@ -1697,7 +1602,6 @@ app.post("/", async (req, res) => {
     }
 
     const messageId = messaging?.message?.mid;
-
     if (messageId) {
       if (await wasMessageProcessed(messageId)) {
         console.log(`Mensagem duplicada ignorada: ${messageId}`);
@@ -1708,62 +1612,59 @@ app.post("/", async (req, res) => {
 
     let message = messaging?.message?.text || "";
 
+    // PONTO 7: só grava contato se reserva ainda não estiver confirmada
     if (message && isOnlyPhoneNumber(message)) {
-      console.log(`Telefone detectado automaticamente de ${senderId}: ${message}`);
-      await redisSet(`contato_detectado:${senderId}`, message, 86400);
+      if (!(await redisGet(`reserva_confirmada:${senderId}`))) {
+        console.log(`Telefone detectado automaticamente de ${senderId}: ${message}`);
+        await redisSet(`contato_detectado:${senderId}`, message, 86400);
+      }
     }
 
     if (await redisGet(`reserva_confirmada:${senderId}`)) {
-  console.log(`Cliente ${senderId} já tem reserva — mantendo atendimento normal`);
-}
+      console.log(`Cliente ${senderId} já tem reserva — mantendo atendimento normal`);
+    }
 
-if (isOnlyPhoneNumber(message)) {
-  console.log(`Telefone detectado antes do filtro de mídia: ${message}`);
-  await redisSet(`contato_detectado:${senderId}`, message, 86400);
-}
+    const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
+    const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
 
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       messaging?.message?.attachments?.some(a => a.type !== "fallback")
     );
 
-const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
-const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
-
-if (hasMedia && !isOnlyPhoneNumber(message)) {
-  if (aguardandoContato || contatoDetectado) {
-    console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
-    return;
-  } else {
-    if (await isHorarioComercial()) {
-      await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
+    if (hasMedia && !isOnlyPhoneNumber(message)) {
+      if (aguardandoContato || contatoDetectado) {
+        console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
+        return;
+      } else {
+        if (await isHorarioComercial()) {
+          await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
+        }
+        return;
+      }
     }
-    return;
-  }
-}
 
     if (!message) return;
 
-    if (isOnlyPhoneNumber(message)) {
-      console.log(`Contato detectado de ${senderId}: ${message}`);
-      await redisSet(`contato_detectado:${senderId}`, message, 86400);
+    if (detectCancelamento(message)) {
+      console.log(`Cancelamento detectado de ${senderId}`);
+      await cancelarReservaNoNotion(senderId);
     }
 
     await addPendingMessage(senderId, message);
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
-    // Se conversa foi encerrada por humano e pausa ainda ativa: só enfileira, não processa
     if (await isPaused(senderId)) {
       console.log(`Conversa com ${senderId} pausada — mensagem enfileirada, aguardando expiração`);
       return;
     }
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
-  
-if (!(await isHorarioComercial())) {
-  console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
-  return;
-}
+
+    if (!(await isHorarioComercial())) {
+      console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
+      return;
+    }
 
     const newToken = `${senderId}_${Date.now()}`;
     await setDebounceToken(senderId, newToken);
@@ -1773,6 +1674,9 @@ if (!(await isHorarioComercial())) {
     console.error("Erro:", err);
   }
 });
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   agendarLimpezaSemanal();

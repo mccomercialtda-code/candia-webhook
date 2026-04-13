@@ -716,6 +716,14 @@ async function verificarFollowUpsPendentes() {
       if (await redisGet(`reserva_confirmada:${userId}`)) continue;
       if (await redisGet(`humano_encerrou:${userId}`)) continue;
 
+      // não envia follow-up se houve intervenção humana nos últimos 5 minutos
+      const ultimaIntervencaoWorker = await redisGet(`ultima_intervencao:${userId}`);
+      if (ultimaIntervencaoWorker && Date.now() - parseInt(ultimaIntervencaoWorker) < 5 * 60 * 1000) {
+        console.log(`Follow-up (worker) cancelado para ${userId} — intervenção humana recente`);
+        await redisDel(`followup:${userId}`);
+        continue;
+      }
+
       await redisDel(`followup:${userId}`);
 
       let mensagem = "Oi! Ficou alguma dúvida? Se quiser, a gente segue por aqui 😊";
@@ -820,6 +828,12 @@ INTERPRETAÇÃO DE RESPOSTAS CURTAS
 - Evite respostas longas demais.
 - Após confirmar a reserva, continue respondendo normalmente caso o cliente envie novas mensagens.
 
+NÃO REPETIR INFORMAÇÕES JÁ DADAS
+- Se uma informação já foi dada na conversa (ex: limite de 8 lugares, horário de 15h, condições do sábado), NÃO repita nas mensagens seguintes a menos que o cliente pergunte explicitamente de novo
+- Quando o cliente confirmar um detalhe ou acrescentar informação nova, avance o fluxo — não reapresente o que já foi explicado
+- Exemplos de mensagens que NÃO pedem repetição: "sábado 18/04", "seria por volta de umas 12", "qualquer coisa puxa mais cadeira", "ok", "entendi", "bacana"
+- Nesses casos, responda apenas ao que é novo ou avance para o próximo passo do fluxo
+
 FUNCIONAMENTO
 - Fechado às segundas-feiras
 - Terça a quinta: 17h às 00h
@@ -867,7 +881,7 @@ RESERVAS — REGRAS GERAIS
 - Só mencionar a possibilidade de mais cadeiras se o cliente pedir explicitamente mais lugares do que o limite
 - Sempre informar o horário limite da reserva ao apresentar as condições do dia
 - Após o horário limite: mesas por ordem de chegada, sem nenhuma garantia adicional
-- IMPORTANTE: nunca aceitar reserva com base apenas em "sábado", "essa sexta", "semana que vem" etc. Exigir data com número explícito (ex: "11/04", "11 de abril", "sábado dia 11"). Se o cliente disser só o dia da semana: perguntar "Qual a data certinha? (dia e mês)"
+- IMPORTANTE: nunca aceitar reserva com base apenas em "sábado", "essa sexta", "semana que vem" etc. sem confirmar a data. Se o cliente disser só o dia da semana (ex: "sábado", "essa sexta", "próximo domingo"), calcule a data correta a partir de hoje e confirme: "Seria sábado, dia 19/04?" — aguarde confirmação antes de prosseguir. Só prossiga após o cliente confirmar a data calculada.
 
 RESERVAS — LIMITES POR DIA
 Terça e quarta: até 20 lugares | segurar até 19h | sem limite de reservas
@@ -1228,6 +1242,14 @@ async function agendarFollowUp(userId) {
       if (!(await isHorarioComercial())) return;
       if (await redisGet(`reserva_confirmada:${userId}`)) return;
       if (await redisGet(`humano_encerrou:${userId}`)) return;
+
+      // não envia follow-up se houve intervenção humana nos últimos 5 minutos
+      const ultimaIntervencao = await redisGet(`ultima_intervencao:${userId}`);
+      if (ultimaIntervencao && Date.now() - parseInt(ultimaIntervencao) < 5 * 60 * 1000) {
+        console.log(`Follow-up cancelado para ${userId} — intervenção humana recente`);
+        await redisDel(`followup:${userId}`);
+        return;
+      }
 
       await redisDel(`followup:${userId}`);
 
@@ -1724,6 +1746,16 @@ app.post("/", async (req, res) => {
         return;
       }
 
+      // Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
+      const echoMid = messaging?.message?.mid;
+      if (echoMid) {
+        if (await wasMessageProcessed(echoMid)) {
+          console.log(`Echo duplicado ignorado para ${recipientId}: ${echoMid}`);
+          return;
+        }
+        await markMessageProcessed(echoMid);
+      }
+
       // Intervenção humana real
       console.log(`Intervenção humana REAL detectada para ${recipientId}`);
 
@@ -1736,6 +1768,9 @@ app.post("/", async (req, res) => {
         await saveHistory(recipientId, hist);
         console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
       }
+
+      // registra timestamp da última intervenção humana (usado pelo follow-up)
+      await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
 
       await pauseConversation(recipientId);
       await clearPendingMessages(recipientId);

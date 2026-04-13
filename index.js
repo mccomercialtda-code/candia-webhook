@@ -471,9 +471,41 @@ async function enviarLembretes2Dias() {
   }
 }
 
+// Busca reservas criadas hoje (pelo campo created_time da API Notion)
+async function buscarReservasCriadasHoje() {
+  try {
+    const hoje = getTodayISO(); // YYYY-MM-DD
+    const inicioDia = `${hoje}T00:00:00.000Z`;
+    const fimDia = `${hoje}T23:59:59.999Z`;
+
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: {
+          and: [
+            { timestamp: "created_time", created_time: { on_or_after: inicioDia } },
+            { timestamp: "created_time", created_time: { on_or_before: fimDia } }
+          ]
+        }
+      })
+    });
+    const data = await res.json();
+    return data.results || [];
+  } catch (err) {
+    console.error("Erro ao buscar reservas criadas hoje:", err);
+    return [];
+  }
+}
+
+// Relatório diário às 22h: reservas GRAVADAS hoje (independente da data da reserva)
 async function enviarResumoDiario() {
   console.log("Enviando resumo diário...");
-  const reservas = await buscarReservasGravadasHoje(); // PONTO 10
+  const reservas = await buscarReservasCriadasHoje();
 
   if (reservas.length === 0) {
     await notifyOwner("📋 Resumo do dia: nenhuma reserva gravada hoje.");
@@ -482,14 +514,89 @@ async function enviarResumoDiario() {
 
   const linhas = reservas.map(r => {
     const nome = r.properties?.Nome?.title?.[0]?.text?.content || "—";
-    const dia = r.properties?.Dia?.rich_text?.[0]?.text?.content || "—";
+    const dataReserva = r.properties?.Data?.rich_text?.[0]?.text?.content || "—";
     const lugares = r.properties?.Lugares?.number || "—";
     const total = r.properties?.["Total esperado"]?.number || "—";
     const obs = r.properties?.Observações?.rich_text?.[0]?.text?.content || "";
-    return `• ${nome} | ${dia} | ${lugares} lugares | ${total} esperados${obs ? ` | ${obs}` : ""}`;
+    return `• ${nome} | ${dataReserva} | ${lugares} lugares | ${total} esperados${obs ? ` | ${obs}` : ""}`;
   });
 
   await notifyOwner(`📋 Reservas gravadas hoje (${getTodayISO()}):\n${linhas.join("\n")}`);
+}
+
+// Relatório semanal: todas as reservas futuras agrupadas por data
+async function enviarRelatorioSemanal() {
+  console.log("Enviando relatório semanal de reservas...");
+  try {
+    const hoje = getTodayISO();
+    let todasReservas = [];
+    let hasMore = true;
+    let startCursor = undefined;
+
+    while (hasMore) {
+      const bodyObj = {
+        page_size: 100,
+        filter: {
+          property: "Data",
+          rich_text: { is_not_empty: true }
+        },
+        sorts: [{ property: "Data", direction: "ascending" }]
+      };
+      if (startCursor) bodyObj.start_cursor = startCursor;
+
+      const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${NOTION_TOKEN}`,
+          "Content-Type": "application/json",
+          "Notion-Version": "2022-06-28"
+        },
+        body: JSON.stringify(bodyObj)
+      });
+      const data = await res.json();
+      const pages = data.results || [];
+
+      for (const page of pages) {
+        const dataISO = page.properties?.Data?.rich_text?.[0]?.text?.content || "";
+        if (dataISO >= hoje) todasReservas.push(page);
+      }
+
+      hasMore = data.has_more || false;
+      startCursor = data.next_cursor || undefined;
+    }
+
+    if (todasReservas.length === 0) {
+      await notifyOwner("📅 Relatório semanal: nenhuma reserva futura encontrada.");
+      return;
+    }
+
+    // Agrupa por data
+    const porData = {};
+    for (const r of todasReservas) {
+      const dataISO = r.properties?.Data?.rich_text?.[0]?.text?.content || "—";
+      const dia = r.properties?.Dia?.rich_text?.[0]?.text?.content || dataISO;
+      if (!porData[dataISO]) porData[dataISO] = { dia, reservas: [] };
+      porData[dataISO].reservas.push(r);
+    }
+
+    const blocos = [];
+    for (const dataISO of Object.keys(porData).sort()) {
+      const { dia, reservas } = porData[dataISO];
+      const linhas = reservas.map(r => {
+        const nome = r.properties?.Nome?.title?.[0]?.text?.content || "—";
+        const lugares = r.properties?.Lugares?.number || "—";
+        const total = r.properties?.["Total esperado"]?.number || "—";
+        const obs = r.properties?.Observações?.rich_text?.[0]?.text?.content || "";
+        return `${nome} - ${lugares}p - prev ${total}${obs ? ` - ${obs}` : ""}`;
+      });
+      blocos.push(`${dia}\n${linhas.join("\n")}`);
+    }
+
+    await notifyOwner(`📅 Reservas futuras:\n\n${blocos.join("\n\n")}`);
+  } catch (err) {
+    console.error("Erro ao enviar relatório semanal:", err);
+    await notifyOwner(`⚠️ Erro ao gerar relatório semanal: ${err.message}`);
+  }
 }
 
 // ─── Agendamentos ─────────────────────────────────────────────────────────────
@@ -518,7 +625,7 @@ function agendarLimpezaSemanal() {
     limparReservasAntigas()
       .then(n => notifyOwner(`🗑 Limpeza automática concluída: ${n} reserva(s) antiga(s) removida(s).`))
       .catch(err => notifyOwner(`⚠️ Erro na limpeza automática: ${err.message}`));
-    setTimeout(() => setTimeout(executarLimpeza, calcularProximaSegunda10h()), 1000);
+    setTimeout(executarLimpeza, calcularProximaSegunda10h());
   }
 
   const ms = calcularProximaSegunda10h();
@@ -554,8 +661,36 @@ function agendarRotinasDiarias() {
     }, ms);
   }
 
+  function agendarRelatorioSemanal() {
+    const now = new Date();
+    const brt = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+    const diaSemana = brt.getDay(); // 0=dom, 2=ter, 3=qua, 4=qui, 6=sab
+
+    // Relatório às 18h de ter a qui; às 12h no sab e dom
+    const diasComRelatorio = {
+      2: 18, // terça
+      3: 18, // quarta
+      4: 18, // quinta
+      6: 12, // sábado
+      0: 12  // domingo
+    };
+
+    if (diasComRelatorio[diaSemana] !== undefined) {
+      const ms = msAteHorario(diasComRelatorio[diaSemana], 0);
+      console.log(`Relatório semanal agendado em ${Math.round(ms / 3600000)}h`);
+      setTimeout(() => {
+        enviarRelatorioSemanal().catch(err => console.error("Erro no relatório semanal:", err));
+        setTimeout(agendarRelatorioSemanal, 1000);
+      }, ms);
+    } else {
+      // dia sem relatório (seg, sex) — verifica de novo em 1h
+      setTimeout(agendarRelatorioSemanal, 60 * 60 * 1000);
+    }
+  }
+
   agendarLembretes();
   agendarResumo();
+  agendarRelatorioSemanal();
 }
 
 // PONTO 11: worker periódico para follow-ups perdidos após restart do servidor
@@ -722,6 +857,9 @@ PROMOÇÃO DO CHOPE PARA GRUPOS
 - Nunca inventar outros benefícios além dos 2 litros de chope
 - NUNCA dizer que "não tem promoção" — simplesmente não mencionar a menos que perguntem
 
+PRAZO PARA FAZER RESERVA
+Se o cliente perguntar "até quando posso reservar?", "dá pra confirmar até quando?", "quando posso fazer a reserva?" ou algo similar: responder "Quanto antes confirmar, mais chance de ainda ter disponibilidade 😉"
+
 RESERVAS — REGRAS GERAIS
 - Reserva é opcional — garante o lugar. Sem reserva: ordem de chegada
 - Apenas UMA mesa por reserva — não é possível reservar duas mesas. Se pedirem duas: negar educadamente sem escalar
@@ -776,6 +914,7 @@ Domingo após 12h: apenas ordem de chegada. Convidar a vir mesmo assim.
 PAGAMENTO:
 - Sexta a domingo: pagamento antecipado via fichas. Cada um paga o seu.
 - Terça a quinta: comanda individual.
+- Se perguntarem sobre comanda individual ou como funciona o pagamento de sexta a domingo: "De sexta a domingo trabalhamos com pagamento antecipado, via fichas. Aí não precisa se preocupar em dividir a conta, cada um paga o seu 😜"
 
 ALMOÇO:
 - Servido normalmente até as 15hs, de sexta a domingo.
@@ -835,7 +974,7 @@ PERGUNTAS FREQUENTES
 - Programação: destaques do @ocandiabar, tópico "agenda"
 - Samba: sexta, sábado e domingo. Terça a quinta varia — ver agenda
 - Espaço kids: não temos
-- Bolo: pode trazer! Não garantimos espaço na geladeira — como geralmente temos várias reservas, guardamos por ordem de chegada conforme o espaço disponível. Se não houver espaço, o bolo fica na mesa. Não oferecemos pratos e talheres, só guardanapos.
+- Bolo/torta/doce: use exatamente este texto: "Pode trazer sim 😉 Só não conseguimos garantir espaço na geladeira — geralmente temos muitas reservas por dia, então guardamos por ordem de chegada. Se não houver espaço, pode deixar na sua mesa mesmo 🙂 Só um detalhe importante: pratinhos e talheres a gente não tem, só guardanapos. Vale trazer os de vocês!"
 - Palco no sábado: salão interno. Aos sábados não há mesas no salão.
 - Local do palco/mesa: definido no dia conforme movimento e reservas
 - Nomes na reserva: não precisa, comanda individual
@@ -853,7 +992,7 @@ EXEMPLOS DE TOM
 "Temos sim! O samba começa às 18h30 e vai até às 21h30 😊"
 "R$10 por pessoa"
 "Varia bastante!"
-"Pode trazer bolo à vontade! Não garantimos espaço na geladeira — guardamos por ordem de chegada. Se não couber, fica na mesa mesmo. Só não temos pratos e talheres, só guardanapos 😉"
+"Pode trazer sim 😉 Só não conseguimos garantir espaço na geladeira — geralmente temos muitas reservas por dia, então guardamos por ordem de chegada. Se não houver espaço, pode deixar na sua mesa mesmo 🙂 Só um detalhe importante: pratinhos e talheres a gente não tem, só guardanapos. Vale trazer os de vocês!"
 "Aos sábados conseguimos reservar apenas uma mesa de apoio com até 8 lugares sentados. A gente segura a reserva até as 15h, com tolerância de 15 minutinhos. Podemos seguir com a reserva nesse formato?"
 "Confirmamos a reserva e te aguardamos aqui 🎉 Se tiver algum imprevisto e não puder comparecer, nos avisa por favor?"
 "A banda e as mesas nem sempre ficam nos mesmos lugares — montamos no dia conforme a capacidade, número de reservas e antecedência dos pedidos. Mas vamos registrar sua preferência e tentamos colocar onde você sugeriu!"
@@ -1199,6 +1338,7 @@ async function handleTelegramCommand(text) {
     }
     await redisDel("global:paused");
     await enableForceOutsideHours(3600);
+    processarFilaAcumulada().catch(err => console.error("Erro ao processar fila no /start:", err));
     await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
     return;
   }

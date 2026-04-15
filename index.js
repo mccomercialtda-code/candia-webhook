@@ -447,6 +447,7 @@ async function enviarLembretes2Dias() {
         falhas.push(`${nome} (erro: ${igData.error.message} — contato: ${contato})`);
       } else {
         console.log(`Lembrete enviado para ${nome} (${igId})`);
+        await redisSet(`echo_bot:${igId}`, "1", 30);
         await fetch(`https://api.notion.com/v1/pages/${reserva.id}`, {
           method: "PATCH",
           headers: {
@@ -731,6 +732,7 @@ async function verificarFollowUpsPendentes() {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
 
+      await redisSet(`echo_bot:${userId}`, "1", 30);
       await sendInstagramMessage(userId, mensagem);
       await salvarUltimaRespostaBot(userId, mensagem);
       console.log(`Follow-up (worker) enviado para ${userId}`);
@@ -834,6 +836,12 @@ NÃO REPETIR INFORMAÇÕES JÁ DADAS
 - Exemplos de mensagens que NÃO pedem repetição: "sábado 18/04", "seria por volta de umas 12", "qualquer coisa puxa mais cadeira", "ok", "entendi", "bacana"
 - Nesses casos, responda apenas ao que é novo ou avance para o próximo passo do fluxo
 
+LIMITE DE INFORMAÇÕES POR MENSAGEM
+- Nunca envie mais de 2 informações distintas numa mesma mensagem
+- Se o cliente fizer várias perguntas de uma vez, responda as 2 mais relevantes e pergunte: "Quer saber mais alguma coisa?" — o restante responde na próxima mensagem
+- Respostas longas com vários tópicos separados por quebra de linha são proibidas no Instagram — mantenha cada mensagem curta e focada
+- Nunca use estrutura de tópicos ou listas numa mesma mensagem
+
 FUNCIONAMENTO
 - Fechado às segundas-feiras
 - Terça a quinta: 17h às 00h
@@ -894,7 +902,7 @@ SÁBADO — REGRAS ESPECIAIS
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - A reserva é segurada até 15h, com tolerância de 15 minutinhos — após isso não conseguimos manter
 - Se o cliente não puder chegar até 15h: "Pode vir à vontade! A casa sempre comporta todo mundo 😊" — não mencionar reserva nem dar entender que haverá lugar guardado
-- Não mencionar área coberta/descoberta a menos que a disponibilidade consultada indique área descoberta
+- Não mencionar área coberta/descoberta espontaneamente. Se a disponibilidade consultada indicar apenas área descoberta, avisar que a reserva será na área externa. Nunca dizer que 'temos disponibilidade na área coberta' — simplesmente prossiga normalmente sem mencionar qual área
 - Após 15h: mesas por ordem de chegada, sem garantia alguma
 - Palco fica no salão interno. Aos sábados não há mesas no salão — a galera curte por lá em volta da música
 - Se pedir duas mesas: explicar que fazemos apenas uma mesa por reserva, sem escalar
@@ -1258,6 +1266,7 @@ async function agendarFollowUp(userId) {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
 
+      await redisSet(`echo_bot:${userId}`, "1", 30);
       await sendInstagramMessage(userId, mensagem);
       await salvarUltimaRespostaBot(userId, mensagem);
       console.log(`Follow-up (setTimeout) enviado para ${userId}`);
@@ -1330,10 +1339,35 @@ async function handleTelegramCommand(text) {
   if (cmd.startsWith("/reativar")) {
     const parts = raw.split(" ");
     if (parts.length > 1) {
-      const userId = parts[1].trim();
+      let userId = parts[1].trim();
+
+      // suporte a /reativar @username
+      if (userId.startsWith("@")) {
+        const username = userId.slice(1).toLowerCase();
+        const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
+          headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+        });
+        const data = await res.json();
+        const keys = data.result || [];
+        let found = null;
+        for (const key of keys) {
+          const val = await redisGet(key);
+          if (val && val.toLowerCase() === username) {
+            found = key.replace("ig_username:", "");
+            break;
+          }
+        }
+        if (!found) {
+          await notifyOwner(`⚠️ Usuário @${username} não encontrado no cache. Use o ID numérico.`);
+          return;
+        }
+        userId = found;
+      }
+
       await limparConversaEscalada(userId);
       await redisDel(`paused:${userId}`);
-      await notifyOwner(`▶️ Conversa ${userId} reativada!`);
+      const username = await redisGet(`ig_username:${userId}`);
+      await notifyOwner(`▶️ Conversa ${userId}${username ? ` (@${username})` : ""} reativada!`);
       return;
     }
     await redisDel("global:paused");
@@ -1435,6 +1469,7 @@ Ex: /status 11/04
 
 /pausar — Pausa o bot globalmente
 /reativar — Reativa o bot
+/reativar @username — Reativa pelo @ do Instagram
 /help — Mostra esta lista`
     );
     return;
@@ -1442,6 +1477,21 @@ Ex: /status 11/04
 }
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
+
+async function buscarUsernameInstagram(userId) {
+  try {
+    const cached = await redisGet(`ig_username:${userId}`);
+    if (cached) return cached;
+    const res = await fetch(`https://graph.instagram.com/v25.0/${userId}?fields=username&access_token=${IG_TOKEN}`);
+    const data = await res.json();
+    const username = data.username || null;
+    if (username) await redisSet(`ig_username:${userId}`, username, 86400 * 30);
+    return username;
+  } catch (err) {
+    console.error(`Erro ao buscar username de ${userId}:`, err);
+    return null;
+  }
+}
 
 async function sendInstagramMessage(userId, text) {
   const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
@@ -1614,7 +1664,8 @@ async function processMessages(userId, myToken) {
   const escalarMatch = reply.match(/\[ESCALAR:\s*motivo=(.*?)\]/i);
   if (escalarMatch) {
     const motivoEscalada = escalarMatch[1]?.trim() || "Sem motivo informado";
-    await notifyOwner(`⚠️ Escalonar conversa com ${userId}\nMotivo: ${motivoEscalada}`);
+    const usernameEscalado = await redisGet(`ig_username:${userId}`);
+    await notifyOwner(`⚠️ Escalonar conversa com ${userId}${usernameEscalado ? ` (@${usernameEscalado})` : ""}\nMotivo: ${motivoEscalada}\nUse: /reativar ${userId}`);
     await marcarConversaEscalada(userId, motivoEscalada);
     await clearPendingMessages(userId);
     await setDebounceToken(userId, `cancelled_${Date.now()}`);
@@ -1758,6 +1809,7 @@ app.post("/", async (req, res) => {
 
       // Intervenção humana real
       console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+      const usernameIntervencao = await redisGet(`ig_username:${recipientId}`);
 
       // salva mensagem do atendente no histórico para o Claude ter contexto depois
       const echoText = messaging?.message?.text;
@@ -1772,6 +1824,11 @@ app.post("/", async (req, res) => {
       // registra timestamp da última intervenção humana (usado pelo follow-up)
       await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
 
+      // busca @ do cliente para facilitar o /reativar no Telegram
+      buscarUsernameInstagram(recipientId).catch(() => {});
+
+      await notifyOwner(`👤 Intervenção em ${recipientId}${usernameIntervencao ? ` (@${usernameIntervencao})` : ""}
+Use: /reativar ${recipientId}`);
       await pauseConversation(recipientId);
       await clearPendingMessages(recipientId);
       await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
@@ -1825,6 +1882,13 @@ app.post("/", async (req, res) => {
     const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
     const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
 
+    // story mention: ignorar silenciosamente (será repostado pelo dono)
+    const isStoryMention = messaging?.message?.attachments?.some(a => a.type === "story_mention");
+    if (isStoryMention) {
+      console.log(`Story mention ignorado de ${senderId}`);
+      return;
+    }
+
     const hasMedia = !message && (
       messaging?.message?.sticker_id ||
       messaging?.message?.attachments?.some(a => a.type !== "fallback")
@@ -1842,7 +1906,18 @@ app.post("/", async (req, res) => {
       }
     }
 
-    if (!message) return;
+    // anúncio (referral): cliente clicou num ad sem enviar texto — responder com saudação
+    if (!message) {
+      const referral = messaging?.referral || messaging?.message?.referral;
+      if (referral && await isHorarioComercial()) {
+        console.log(`Referral/anúncio detectado de ${senderId}`);
+        const saudacao = "Oi! Seja bem-vindo ao Candiá 🎉 Como posso ajudar?";
+        await redisSet(`echo_bot:${senderId}`, "1", 30);
+        await sendInstagramMessage(senderId, saudacao);
+        await salvarUltimaRespostaBot(senderId, saudacao);
+      }
+      return;
+    }
 
     if (detectCancelamento(message)) {
       console.log(`Cancelamento detectado de ${senderId}`);

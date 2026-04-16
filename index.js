@@ -231,6 +231,14 @@ async function salvarReservaNaNotion(data, instagramId) {
     "Instagram ID": { rich_text: [{ text: { content: instagramId || "" } }] }
   };
 
+  // adiciona Instagram Username se disponível no cache
+  const igUsername = instagramId ? await redisGet(`ig_username:${instagramId}`) : null;
+  if (igUsername) {
+    properties["Instagram Username"] = {
+      rich_text: [{ text: { content: igUsername } }]
+    };
+  }
+
   if (data.observacao && data.observacao.trim()) {
     properties["Observações"] = {
       rich_text: [{ text: { content: data.observacao.trim() } }]
@@ -467,9 +475,8 @@ async function enviarLembretes2Dias() {
 
   if (falhas.length > 0) {
     await notifyOwner(`⚠️ Lembretes não enviados (${falhas.length}):\n${falhas.map(f => `• ${f}`).join("\n")}\nEntre em contato manualmente.`);
-  } else {
-    await notifyOwner(`✅ Lembretes enviados para ${reservas.length} reserva(s) do dia ${targetDate}.`);
   }
+  // sucesso silencioso — sem notificação quando tudo funciona
 }
 
 // Busca reservas criadas hoje (pelo campo created_time da API Notion)
@@ -959,6 +966,11 @@ Se alguém se apresentar como músico interessado em tocar no Candiá:
 "A gente ama essa energia dos músicos de BH! 🎶 No momento estamos com a agenda bem preenchida com a galera que já toca aqui, mas deixa seu material registrado — havendo oportunidade, a gente entra em contato!"
 Não escalar. Não continuar o papo além disso.
 
+VAGA DE GARÇOM OU FREELANCER
+Se alguém perguntar sobre vaga de garçom, freelancer, trabalho ou oportunidade de emprego no Candiá:
+Pedir o número de WhatsApp e responder: "Deixa seu WhatsApp aqui que, se surgir uma oportunidade, a gente entra em contato! 😊"
+Não escalar. Não continuar o papo além disso.
+
 FLUXO DE RESERVA
 1. Perguntar: para qual dia e quantas pessoas? Não antecipar outras informações.
 2. Aguardar o cliente informar uma data com número explícito (ex: "11/04", "11 de abril", "sábado dia 11"). Nunca prosseguir com só "sábado" ou "essa sexta" — perguntar a data certinha.
@@ -1020,6 +1032,12 @@ EXEMPLOS DE TOM
 "A banda e as mesas nem sempre ficam nos mesmos lugares — montamos no dia conforme a capacidade, número de reservas e antecedência dos pedidos. Mas vamos registrar sua preferência e tentamos colocar onde você sugeriu!"
 "Pode vir à vontade! A casa sempre comporta todo mundo 😊"
 "Será um prazer receber vocês! Pode chegar e perguntar pelo João, nosso gerente 😊"
+
+ENCERRAMENTO DE CONVERSA
+Quando o cliente demonstrar que a conversa chegou ao fim com mensagens como "obrigado", "obrigada", "valeu", "fechado", "até lá", "perfeito", "ótimo", "show", "😊👍" ou similares:
+- Responda uma única vez de forma calorosa e breve. Ex: "A gente te espera lá! 🎉" ou "Até lá! 😊"
+- Após essa resposta final, NÃO responda mais mensagens de agradecimento ou confirmação — a conversa está encerrada
+- Se o cliente mandar outro agradecimento ou emoji em sequência, NÃO responda
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 }
@@ -1188,8 +1206,9 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  await redisSet(`paused:${userId}`, "1", 60 * 30); // 30 min
-  console.log(`Conversa com ${userId} pausada por 30 minutos`);
+  // pausa permanente — só é removida pelo /reativar
+  await redisSet(`paused:${userId}`, "1", 86400 * 30);
+  console.log(`Conversa com ${userId} pausada indefinidamente (use /reativar)`);
 }
 
 async function getPendingMessages(userId) {
@@ -1444,6 +1463,110 @@ async function handleTelegramCommand(text) {
     return;
   }
 
+  if (cmd.startsWith("/reservar ")) {
+    let userId = raw.split(" ")[1]?.trim();
+    if (!userId) { await notifyOwner("⚠️ Use: /reservar @username"); return; }
+
+    // resolve @username para ID
+    if (userId.startsWith("@")) {
+      const username = userId.slice(1).toLowerCase();
+      const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const data = await res.json();
+      const keys = data.result || [];
+      let found = null;
+      for (const key of keys) {
+        const val = await redisGet(key);
+        if (val && val.toLowerCase() === username) {
+          found = key.replace("ig_username:", "");
+          break;
+        }
+      }
+      if (!found) {
+        await notifyOwner(`⚠️ Usuário ${userId} não encontrado no cache. Use o ID numérico.`);
+        return;
+      }
+      userId = found;
+    }
+
+    // busca histórico e extrai dados de reserva via Claude
+    const hist = await getHistory(userId);
+    if (hist.length === 0) {
+      await notifyOwner(`⚠️ Nenhum histórico encontrado para ${userId}.`);
+      return;
+    }
+
+    const igUsername = await redisGet(`ig_username:${userId}`);
+    await notifyOwner(`🔍 Buscando dados de reserva no histórico de ${userId}${igUsername ? ` (@${igUsername})` : ""}...`);
+
+    try {
+      const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": CLAUDE_API_KEY,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 512,
+          system: `Você é um assistente que extrai dados de reserva de uma conversa de WhatsApp/Instagram.
+Analise o histórico e extraia os dados de reserva se existirem.
+Responda APENAS no formato JSON abaixo, sem texto adicional:
+{
+  "encontrou": true/false,
+  "data": "DD/MM/AAAA ou null",
+  "dia": "dia da semana ou null",
+  "aniversariante": "nome completo ou null",
+  "contato": "telefone ou null",
+  "lugares": numero ou null,
+  "total_esperado": numero ou null,
+  "observacao": "texto ou vazio"
+}
+Se não encontrar dados suficientes para uma reserva, retorne encontrou: false.`,
+          messages: [
+            { role: "user", content: "Histórico da conversa:\n" + hist.map(h => h.role + ": " + h.content).join("\n") }
+          ]
+        })
+      });
+
+      const claudeData = await claudeRes.json();
+      const rawText = claudeData.content?.[0]?.text || "";
+      const clean = rawText.replace(/```json|```/g, "").trim();
+      const dados = JSON.parse(clean);
+
+      if (!dados.encontrou) {
+        await notifyOwner(`⚠️ Não encontrei dados suficientes de reserva no histórico de ${userId}${igUsername ? ` (@${igUsername})` : ""}.
+Verifique a conversa manualmente.`);
+        return;
+      }
+
+      const salvou = await salvarReservaNaNotion(dados, userId);
+      if (salvou) {
+        await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+        await notifyOwner(
+          `✅ Reserva gravada no Notion!
+` +
+          `Cliente: ${userId}${igUsername ? ` (@${igUsername})` : ""}
+` +
+          `Nome: ${dados.aniversariante}
+` +
+          `Data: ${dados.data} (${dados.dia})
+` +
+          `Lugares: ${dados.lugares} | Total: ${dados.total_esperado}
+` +
+          `Contato: ${dados.contato}
+` +
+          `Obs: ${dados.observacao || "—"}`
+        );
+      }
+    } catch (err) {
+      await notifyOwner(`⚠️ Erro ao extrair dados de reserva: ${err.message}`);
+    }
+    return;
+  }
+
   if (cmd === "/help") {
     await notifyOwner(
 `📋 Comandos disponíveis:
@@ -1470,6 +1593,7 @@ Ex: /status 11/04
 /pausar — Pausa o bot globalmente
 /reativar — Reativa o bot
 /reativar @username — Reativa pelo @ do Instagram
+/reservar @username — Grava reserva a partir do histórico
 /help — Mostra esta lista`
     );
     return;
@@ -1744,7 +1868,8 @@ async function processMessages(userId, myToken) {
   const isConfirmacao = !!reservation;
   const isEscalacao = !!escalation;
 
-  if (!isConfirmacao && !isEscalacao && respostaContemInfoReserva(cleanReply)) {
+  const jaTemReserva = !!(await redisGet(`reserva_confirmada:${userId}`));
+  if (!isConfirmacao && !isEscalacao && !jaTemReserva && respostaContemInfoReserva(cleanReply)) {
     await agendarFollowUp(userId);
     console.log(`Follow-up agendado para ${userId} em 6h`);
   }
@@ -1827,8 +1952,6 @@ app.post("/", async (req, res) => {
       // busca @ do cliente para facilitar o /reativar no Telegram
       buscarUsernameInstagram(recipientId).catch(() => {});
 
-      await notifyOwner(`👤 Intervenção em ${recipientId}${usernameIntervencao ? ` (@${usernameIntervencao})` : ""}
-Use: /reativar ${recipientId}`);
       await pauseConversation(recipientId);
       await clearPendingMessages(recipientId);
       await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");

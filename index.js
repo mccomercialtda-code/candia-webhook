@@ -1155,9 +1155,32 @@ function extractEscalation(text) {
   return obj;
 }
 
+function dateToBR(d) {
+  const dia = String(d.getDate()).padStart(2, "0");
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const ano = d.getFullYear();
+  return `${dia}/${mes}/${ano}`;
+}
+
+function proximoDiaSemana(nomeDia) {
+  const diasMap = {
+    "domingo": 0, "segunda": 1, "terça": 2, "terca": 2,
+    "quarta": 3, "quinta": 4, "sexta": 5, "sábado": 6, "sabado": 6
+  };
+  const alvo = diasMap[nomeDia.toLowerCase()];
+  if (alvo === undefined) return null;
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  const hoje = now.getDay();
+  let diff = alvo - hoje;
+  if (diff <= 0) diff += 7;
+  const d = new Date(now);
+  d.setDate(now.getDate() + diff);
+  return dateToBR(d);
+}
+
 function extractExplicitDates(text) {
   const ddmm = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g) || [];
-  const now = new Date();
+  const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
   const year = now.getFullYear();
   const results = ddmm.map(d => {
     const parts = d.split("/");
@@ -1172,6 +1195,31 @@ function extractExplicitDates(text) {
     const mesAtual = now.getMonth() + 1;
     const anoAtual = now.getFullYear();
     results.push(`${String(diaNum).padStart(2,"0")}/${String(mesAtual).padStart(2,"0")}/${anoAtual}`);
+  }
+
+  // extrai "hoje" e "amanhã"
+  const t = text.toLowerCase();
+  if (/\bhoje\b/.test(t)) {
+    results.push(dateToBR(now));
+  }
+  if (/\bamanhã\b|\bamanha\b/.test(t)) {
+    const amanha = new Date(now);
+    amanha.setDate(now.getDate() + 1);
+    results.push(dateToBR(amanha));
+  }
+
+  // extrai "esse sábado", "essa sexta", "próximo domingo" etc sem número
+  const diaSemanaRegex = /\b(esse|essa|próximo|proxima|próxima|proxima)\s+(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\b/gi;
+  while ((match = diaSemanaRegex.exec(text)) !== null) {
+    const data = proximoDiaSemana(match[2]);
+    if (data) results.push(data);
+  }
+
+  // extrai dia da semana sozinho como primeira palavra do texto (ex: "sábado" sem número)
+  const diaIsolado = text.trim().toLowerCase().match(/^(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\b/);
+  if (diaIsolado) {
+    const data = proximoDiaSemana(diaIsolado[1]);
+    if (data) results.push(data);
   }
 
   return [...new Set(results)];
@@ -1600,7 +1648,7 @@ Verifique a conversa manualmente.`);
 
       const salvou = await salvarReservaNaNotion(dados, userId);
       if (salvou) {
-        await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+        await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
         await notifyOwner(
           `✅ Reserva gravada no Notion!
 ` +
@@ -1936,7 +1984,7 @@ async function processMessages(userId, myToken) {
   if (reservation) {
     const salvou = await salvarReservaNaNotion(reservation, userId);
     if (salvou) {
-      await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 2);
+      await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
       await clearPendingMessages(userId);
       await redisDel(`aguardando_contato:${userId}`);
       await redisDel(`contato_detectado:${userId}`);

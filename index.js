@@ -17,8 +17,8 @@ const DEBOUNCE_MS = 90000; // 1.5 min
 const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
-const BOT_HORA_INICIO = 9;
-const BOT_HORA_FIM = 22;
+const BOT_HORA_INICIO = 8;
+const BOT_HORA_FIM = 23;
 
 const LIMITES = {
   "sexta":   { coberto: 10, descoberto: 0,  total: 10 },
@@ -199,7 +199,17 @@ async function verificarDisponibilidade(dataStr) {
   if (override === "esg") return { disponivel: false, tipo: "esgotado", override: true, diaSemana };
   if (override === "ext") return { disponivel: true, tipo: "descoberto", override: true, vagasDescoberto: 1, diaSemana };
 
-  const limites = LIMITES[diaSemana];
+  // verifica se há limite especial configurado para este dia
+  const regraDiaEsp = await getRegraDia(dataISO);
+  let limites = LIMITES[diaSemana];
+
+  if (regraDiaEsp?.limite_reservas) {
+    const limiteEsp = parseInt(regraDiaEsp.limite_reservas);
+    if (!isNaN(limiteEsp)) {
+      limites = { coberto: limiteEsp, descoberto: 0, total: limiteEsp };
+    }
+  }
+
   if (!limites) return { disponivel: true, tipo: "sem_limite", diaSemana };
 
   const count = await contarReservasNotion(dataStr);
@@ -793,7 +803,7 @@ async function processarFilaAcumulada() {
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
-function getSystemPrompt(disponibilidade) {
+function getSystemPrompt(disponibilidade, regrasDia = null) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -807,11 +817,22 @@ function getSystemPrompt(disponibilidade) {
     ? `\nDISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA\n${disponibilidade}\n`
     : "";
 
+  const regrasEspeciaisInfo = regrasDia ? (() => {
+    const linhas = ["\nREGRAS ESPECIAIS PARA HOJE"];
+    if (regrasDia.horario_funcionamento) linhas.push(`Horário de funcionamento hoje: ${regrasDia.horario_funcionamento}`);
+    if (regrasDia.horario_musica) linhas.push(`Horário da música hoje: ${regrasDia.horario_musica}`);
+    if (regrasDia.horario_reservas) linhas.push(`Reservas seguradas até: ${regrasDia.horario_reservas}`);
+    if (regrasDia.limite_reservas) linhas.push(`Limite de reservas hoje: ${regrasDia.limite_reservas}`);
+    if (regrasDia.mensagem_especial) linhas.push(`Mensagem especial para este dia: ${regrasDia.mensagem_especial}`);
+    linhas.push("Use estas informações ao invés das regras padrão para hoje.\n");
+    return linhas.join("\n");
+  })() : "";
+
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-${dispInfo}
+${dispInfo}${regrasEspeciaisInfo}
 IDENTIDADE E TOM
 - Simpático, alegre, acolhedor e descontraído — mas sempre focado em responder apenas o que foi perguntado
 - Primeira pessoa do plural: "a gente", "conseguimos", "seguramos", "aguardamos"
@@ -893,6 +914,7 @@ RESERVAS — REGRAS GERAIS
 - Reserva é opcional — garante o lugar. Sem reserva: ordem de chegada
 - Apenas UMA mesa por reserva — não é possível reservar duas mesas. Se pedirem duas: negar educadamente sem escalar
 - Se o grupo for maior que o limite: informar quantos lugares sentados conseguimos garantir e dizer que o espaço comporta todo mundo à vontade — quem não tiver assento fica em volta da mesa curtindo e sambando. Nunca dizer "em pé" ou "circulando"
+- Se o cliente reclamar que 8 lugares não atende, que fica difícil, ou que o grupo é mais velho: responder "Aqui é um bar de samba onde a galera naturalmente fica mais em pé curtindo a música — mesmo em grupos de 30 pessoas, os 8 lugares sentados costumam funcionar muito bem 🧡 Quem não estiver na mesa fica perto curtindo junto!"
 - Só mencionar a possibilidade de mais cadeiras se o cliente pedir explicitamente mais lugares do que o limite
 - Sempre informar o horário limite da reserva ao apresentar as condições do dia
 - Após o horário limite: mesas por ordem de chegada, sem nenhuma garantia adicional
@@ -908,14 +930,16 @@ Domingo: até 15 lugares | segurar até 14h | máximo 10 reservas
 SÁBADO — REGRAS ESPECIAIS
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - A reserva é segurada até 15h, com tolerância de 15 minutinhos — após isso não conseguimos manter
-- Se o cliente não puder chegar até 15h: "Pode vir à vontade! A casa sempre comporta todo mundo 😊" — não mencionar reserva nem dar entender que haverá lugar guardado
+- Se o cliente não puder chegar até 15h ou quiser vir mais tarde: "Aqui é um bar onde a galera fica mais em pé curtindo o samba — se preferir vir mais tarde sem reserva, sempre cabe todo mundo 🧡" — não mencionar reserva nem dar entender que haverá lugar guardado
 - Não mencionar área coberta/descoberta espontaneamente. Se a disponibilidade consultada indicar apenas área descoberta, avisar que a reserva será na área externa. Nunca dizer que 'temos disponibilidade na área coberta' — simplesmente prossiga normalmente sem mencionar qual área
 - Após 15h: mesas por ordem de chegada, sem garantia alguma
 - Palco fica no salão interno. Aos sábados não há mesas no salão — a galera curte por lá em volta da música
 - Se pedir duas mesas: explicar que fazemos apenas uma mesa por reserva, sem escalar
 
-TERÇA A QUINTA — CHEGADA APÓS 19H
-Se o cliente pedir para chegar após 19h (terça a quinta): "Deixa eu verificar pra vocês — em breve retornamos!" + [ESCALAR: motivo=Cliente quer chegar após 19h em dia de semana — verificar disponibilidade]
+TERÇA A SEXTA — CHEGADA APÓS 19H
+- Se o cliente disser que chega até 19h30 (terça a sexta): aceitar normalmente sem escalar. Informar que se pelo menos 1 pessoa do grupo chegar no horário, a mesa já fica garantida para todos.
+- Se o cliente pedir para chegar após 19h30 (terça a sexta): responder "Deixa eu verificar pra vocês — em breve retornamos!" + [ESCALAR: motivo=Cliente quer chegar após 19h30 em dia de semana — verificar disponibilidade]
+- Ao confirmar horário entre 19h e 19h30: reforçar que basta 1 pessoa do grupo chegar no horário para garantir a mesa
 
 CLIENTE VAI PESSOALMENTE
 Se o cliente disser que vai ao bar conversar pessoalmente ou resolver pessoalmente:
@@ -1434,7 +1458,8 @@ async function handleTelegramCommand(text) {
     const dataISO = parseDateFromCommand(cmd.slice(8));
     if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04"); return; }
     await clearOverride(dataISO);
-    await notifyOwner(`✅ Override removido para ${formatDateBR(dataISO)} — bot voltará a consultar o Notion normalmente.`);
+    await redisDel(`regra_dia:${dataISO}`);
+    await notifyOwner(`✅ Override e regras especiais removidos para ${formatDateBR(dataISO)}.`);
     return;
   }
 
@@ -1460,6 +1485,44 @@ async function handleTelegramCommand(text) {
     if (override) msg += `Override manual: ${override === "esg" ? "🔴 ESGOTADO" : "🟡 APENAS EXTERNA"}\n`;
     msg += `Notion: ${disp.tipo} (${disp.count ?? "?"} reservas)`;
     await notifyOwner(msg);
+    return;
+  }
+
+  if (cmd.startsWith("/dia ")) {
+    const dataISO = parseDateFromCommand(raw.slice(5).trim());
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /dia 18/04"); return; }
+
+    // verifica se já tem regras salvas
+    const regraAtual = await getRegraDia(dataISO);
+    let msgAtual = "";
+    if (regraAtual) {
+      const linhas = [];
+      if (regraAtual.horario_funcionamento) linhas.push(`Horário funcionamento: ${regraAtual.horario_funcionamento}`);
+      if (regraAtual.horario_musica) linhas.push(`Horário música: ${regraAtual.horario_musica}`);
+      if (regraAtual.horario_reservas) linhas.push(`Horário reservas: ${regraAtual.horario_reservas}`);
+      if (regraAtual.limite_reservas) linhas.push(`Limite de reservas: ${regraAtual.limite_reservas}`);
+      if (regraAtual.mensagem_especial) linhas.push(`Mensagem especial: ${regraAtual.mensagem_especial}`);
+      msgAtual = "\n\n⚙️ Regras atuais:\n" + linhas.join("\n");
+    }
+
+    await redisSet("telegram:aguardando_dia", dataISO, 300);
+    await notifyOwner(
+      `📅 Configuração especial para ${formatDateBR(dataISO)}${msgAtual}
+
+` +
+      `Responda preenchendo o que quiser alterar (deixe em branco o que não mudar):
+
+` +
+      `Horário funcionamento: 
+` +
+      `Horário música: 
+` +
+      `Horário reservas: 
+` +
+      `Limite de reservas: 
+` +
+      `Mensagem especial: `
+    );
     return;
   }
 
@@ -1511,20 +1574,10 @@ async function handleTelegramCommand(text) {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 512,
-          system: `Você é um assistente que extrai dados de reserva de uma conversa de WhatsApp/Instagram.
-Analise o histórico e extraia os dados de reserva se existirem.
-Responda APENAS no formato JSON abaixo, sem texto adicional:
-{
-  "encontrou": true/false,
-  "data": "DD/MM/AAAA ou null",
-  "dia": "dia da semana ou null",
-  "aniversariante": "nome completo ou null",
-  "contato": "telefone ou null",
-  "lugares": numero ou null,
-  "total_esperado": numero ou null,
-  "observacao": "texto ou vazio"
-}
-Se não encontrar dados suficientes para uma reserva, retorne encontrou: false.`,
+          system: `Extraia dados de reserva do histórico de conversa. Retorne SOMENTE JSON válido, sem nenhum texto antes ou depois, sem markdown, sem backticks. Formato exato:
+{"encontrou":true,"data":"DD/MM/AAAA","dia":"dia da semana","aniversariante":"nome","contato":"telefone","lugares":8,"total_esperado":10,"observacao":""}
+Se não houver dados suficientes: {"encontrou":false}
+IMPORTANTE: responda APENAS com o JSON. Nenhuma palavra antes ou depois.`,
           messages: [
             { role: "user", content: "Histórico da conversa:\n" + hist.map(h => h.role + ": " + h.content).join("\n") }
           ]
@@ -1590,6 +1643,9 @@ Ex: /status 11/04
 
 /status — Mostra se o bot está ativo ou pausado
 
+/dia DD/MM — Configura regras especiais para uma data
+Ex: /dia 18/04
+
 /pausar — Pausa o bot globalmente
 /reativar — Reativa o bot
 /reativar @username — Reativa pelo @ do Instagram
@@ -1598,6 +1654,60 @@ Ex: /status 11/04
     );
     return;
   }
+}
+
+// ─── Regras especiais por dia ────────────────────────────────────────────────
+
+async function getRegraDia(dataISO) {
+  const raw = await redisGet(`regra_dia:${dataISO}`);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+async function setRegraDia(dataISO, regras) {
+  await redisSet(`regra_dia:${dataISO}`, JSON.stringify(regras), 86400 * 60);
+}
+
+async function processarRespostaDia(dataISO, texto) {
+  const linhas = texto.split("\n").map(l => l.trim()).filter(Boolean);
+  const regras = {};
+
+  for (const linha of linhas) {
+    const lower = linha.toLowerCase();
+    const valor = linha.split(":").slice(1).join(":").trim();
+    if (!valor) continue;
+
+    if (lower.startsWith("horário funcionamento") || lower.startsWith("horario funcionamento")) {
+      regras.horario_funcionamento = valor;
+    } else if (lower.startsWith("horário música") || lower.startsWith("horario musica") || lower.startsWith("horário musica") || lower.startsWith("horario música")) {
+      regras.horario_musica = valor;
+    } else if (lower.startsWith("horário reservas") || lower.startsWith("horario reservas")) {
+      regras.horario_reservas = valor;
+    } else if (lower.startsWith("limite de reservas") || lower.startsWith("limite reservas")) {
+      regras.limite_reservas = valor;
+    } else if (lower.startsWith("mensagem especial") || lower.startsWith("mensagem diferente")) {
+      regras.mensagem_especial = valor;
+    }
+  }
+
+  if (Object.keys(regras).length === 0) {
+    await notifyOwner(`⚠️ Nenhuma regra reconhecida. Use o formato:
+Horário funcionamento: 11h às 23h
+Limite de reservas: 5`);
+    return;
+  }
+
+  await setRegraDia(dataISO, regras);
+
+  const linhasConfirm = [];
+  if (regras.horario_funcionamento) linhasConfirm.push(`Horário funcionamento: ${regras.horario_funcionamento}`);
+  if (regras.horario_musica) linhasConfirm.push(`Horário música: ${regras.horario_musica}`);
+  if (regras.horario_reservas) linhasConfirm.push(`Horário reservas: ${regras.horario_reservas}`);
+  if (regras.limite_reservas) linhasConfirm.push(`Limite de reservas: ${regras.limite_reservas}`);
+  if (regras.mensagem_especial) linhasConfirm.push(`Mensagem especial: ${regras.mensagem_especial}`);
+
+  await notifyOwner(`✅ Regras especiais salvas para ${formatDateBR(dataISO)}:
+${linhasConfirm.join("\n")}`);
 }
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
@@ -1705,7 +1815,11 @@ async function processMessages(userId, myToken) {
     return;
   }
 
-  let systemPrompt = getSystemPrompt(disponibilidadeInfo || null);
+  // busca regras especiais do dia atual
+  const todayISO = getTodayISO();
+  const regrasDiaHoje = await getRegraDia(todayISO);
+
+  let systemPrompt = getSystemPrompt(disponibilidadeInfo || null, regrasDiaHoje);
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
   if (contatoDetectado) {
@@ -1895,7 +2009,17 @@ app.post("/telegram", async (req, res) => {
     if (!message) return;
     const chatId = message.chat?.id?.toString();
     const text = message.text || "";
-    if (chatId === TELEGRAM_CHAT_ID && text.startsWith("/")) {
+    if (chatId !== TELEGRAM_CHAT_ID) return;
+
+    // verifica se está aguardando resposta do formulário /dia
+    const aguardandoDia = await redisGet("telegram:aguardando_dia");
+    if (aguardandoDia && !text.startsWith("/")) {
+      await redisDel("telegram:aguardando_dia");
+      await processarRespostaDia(aguardandoDia, text);
+      return;
+    }
+
+    if (text.startsWith("/")) {
       await handleTelegramCommand(text);
     }
   } catch (err) {
@@ -1981,14 +2105,23 @@ app.post("/", async (req, res) => {
 
     const messageId = messaging?.message?.mid;
     if (messageId) {
-      if (await wasMessageProcessed(messageId)) {
-        console.log(`Mensagem duplicada ignorada: ${messageId}`);
+      // lock atômico NX: só processa se conseguir setar (evita race condition)
+      const lockUrl = `${UPSTASH_URL}/set/${encodeURIComponent("msg_processed:" + messageId)}/1?NX&EX=86400`;
+      const lockRes = await fetch(lockUrl, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const lockData = await lockRes.json();
+      if (lockData.result !== "OK") {
+        console.log(`Mensagem duplicada ignorada (NX): ${messageId}`);
         return;
       }
-      await markMessageProcessed(messageId);
     }
 
     let message = messaging?.message?.text || "";
+
+    // busca e cacheia o @ do cliente na primeira mensagem (para ter disponível na reserva)
+    buscarUsernameInstagram(senderId).catch(() => {});
 
     // PONTO 7: só grava contato se reserva ainda não estiver confirmada
     if (message && isOnlyPhoneNumber(message)) {
@@ -2073,10 +2206,15 @@ app.post("/", async (req, res) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   agendarLimpezaSemanal();
   agendarRotinasDiarias();
   agendarVerificacaoHorario();
   notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});
+  // processa mensagens acumuladas durante downtime/restart
+  if (await isHorarioComercial()) {
+    console.log("Startup dentro do horário — processando fila acumulada");
+    processarFilaAcumulada().catch(err => console.error("Erro na fila acumulada no startup:", err));
+  }
 });

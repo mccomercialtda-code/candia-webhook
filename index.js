@@ -934,6 +934,7 @@ SÁBADO — REGRAS ESPECIAIS
 - Reservamos apenas uma mesa de apoio com até 8 lugares sentados
 - A reserva é segurada até 15h, com tolerância de 15 minutinhos — após isso não conseguimos manter
 - Se o cliente não puder chegar até 15h ou quiser vir mais tarde: "Aqui é um bar onde a galera fica mais em pé curtindo o samba — se preferir vir mais tarde sem reserva, sempre cabe todo mundo 🧡" — não mencionar reserva nem dar entender que haverá lugar guardado
+- Se o cliente reclamar que vai ficar esperando o samba ou que 15h é cedo demais: lembrar que a programação já começa às 15h com a primeira banda — não é espera, é o evento já acontecendo. Ex: "A programação já começa às 15h com a primeira banda, então não é espera — o evento já está rolando desde que vocês chegarem! O samba começa às 18h30 😊"
 - NUNCA mencionar "área externa" ou "área descoberta" no sábado a menos que a disponibilidade consultada indique explicitamente "apenas área descoberta disponível". Se a disponibilidade for "coberto" ou "sem_limite", não mencionar área nenhuma — apenas prosseguir normalmente
 - Após 15h: mesas por ordem de chegada, sem garantia alguma
 - Palco fica no salão interno. Aos sábados não há mesas no salão — a galera curte por lá em volta da música

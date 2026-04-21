@@ -2185,54 +2185,52 @@ app.post("/", async (req, res) => {
   const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
   const echoText = messaging?.message?.text;
 
-  if (echoDoBot) {
-    await redisDel(`echo_bot:${recipientId}`);
-    console.log(`Echo do bot ignorado para ${recipientId}`);
+if (echoDoBot) {
+  await redisDel(`echo_bot:${recipientId}`);
+  console.log(`Echo do bot ignorado para ${recipientId}`);
+  return;
+}
+
+if (!echoText || echoText.trim() === "") {
+  console.log(`Echo sem texto ignorado para ${recipientId}`);
+  return;
+}
+
+// Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
+const echoMid = messaging?.message?.mid;
+if (echoMid) {
+  if (await wasMessageProcessed(echoMid)) {
+    console.log(`Echo duplicado ignorado para ${recipientId}: ${echoMid}`);
     return;
   }
+  await markMessageProcessed(echoMid);
+}
 
-  if (!echoText || echoText.trim() === "") {
-    console.log(`Echo sem texto ignorado para ${recipientId}`);
-    return;
-  }
+// Intervenção humana real
+console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+const usernameIntervencao = await redisGet(`ig_username:${recipientId}`);
 
-      // Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
-      const echoMid = messaging?.message?.mid;
-      if (echoMid) {
-        if (await wasMessageProcessed(echoMid)) {
-          console.log(`Echo duplicado ignorado para ${recipientId}: ${echoMid}`);
-          return;
-        }
-        await markMessageProcessed(echoMid);
-      }
+// usa echoText já declarado 👇
+if (echoText) {
+  const hist = await getHistory(recipientId);
+  hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
+  if (hist.length > 20) hist.splice(0, 2);
+  await saveHistory(recipientId, hist);
+  console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
+}
 
-      // Intervenção humana real
-      console.log(`Intervenção humana REAL detectada para ${recipientId}`);
-      const usernameIntervencao = await redisGet(`ig_username:${recipientId}`);
+// registra timestamp da última intervenção humana
+await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
 
-      // salva mensagem do atendente no histórico para o Claude ter contexto depois
-      const echoText = messaging?.message?.text;
-      if (echoText) {
-        const hist = await getHistory(recipientId);
-        hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
-        if (hist.length > 20) hist.splice(0, 2);
-        await saveHistory(recipientId, hist);
-        console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
-      }
+// busca @ do cliente
+buscarUsernameInstagram(recipientId).catch(() => {});
 
-      // registra timestamp da última intervenção humana (usado pelo follow-up)
-      await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
-
-      // busca @ do cliente para facilitar o /reativar no Telegram
-      buscarUsernameInstagram(recipientId).catch(() => {});
-
-      await pauseConversation(recipientId);
-      await clearPendingMessages(recipientId);
-      await marcarIntervencaoHumana(recipientId, messaging?.message?.text || "");
-      await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
-      await cancelarFollowUp(recipientId);
-      return;
-    }
+await pauseConversation(recipientId);
+await clearPendingMessages(recipientId);
+await marcarIntervencaoHumana(recipientId, echoText);
+await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
+await cancelarFollowUp(recipientId);
+return;
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;

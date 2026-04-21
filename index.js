@@ -2180,57 +2180,57 @@ app.post("/", async (req, res) => {
 
     if (messaging?.read || messaging?.delivery || messaging?.message_edit) return;
 
-   if (messaging?.message?.is_echo) {
+  if (messaging?.message?.is_echo) {
   const recipientId = messaging?.recipient?.id;
   const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
   const echoText = messaging?.message?.text;
 
-if (echoDoBot) {
-  await redisDel(`echo_bot:${recipientId}`);
-  console.log(`Echo do bot ignorado para ${recipientId}`);
-  return;
-}
-
-if (!echoText || echoText.trim() === "") {
-  console.log(`Echo sem texto ignorado para ${recipientId}`);
-  return;
-}
-
-// Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
-const echoMid = messaging?.message?.mid;
-if (echoMid) {
-  if (await wasMessageProcessed(echoMid)) {
-    console.log(`Echo duplicado ignorado para ${recipientId}: ${echoMid}`);
+  if (echoDoBot) {
+    await redisDel(`echo_bot:${recipientId}`);
+    console.log(`Echo do bot ignorado para ${recipientId}`);
     return;
   }
-  await markMessageProcessed(echoMid);
+
+  if (!echoText || echoText.trim() === "") {
+    console.log(`Echo sem texto ignorado para ${recipientId}`);
+    return;
+  }
+
+  // Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
+  const echoMid = messaging?.message?.mid;
+  if (echoMid) {
+    if (await wasMessageProcessed(echoMid)) {
+      console.log(`Echo duplicado ignorado para ${recipientId}: ${echoMid}`);
+      return;
+    }
+    await markMessageProcessed(echoMid);
+  }
+
+  // Intervenção humana real
+  console.log(`Intervenção humana REAL detectada para ${recipientId}`);
+  const usernameIntervencao = await redisGet(`ig_username:${recipientId}`);
+
+  if (echoText) {
+    const hist = await getHistory(recipientId);
+    hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
+    if (hist.length > 20) hist.splice(0, 2);
+    await saveHistory(recipientId, hist);
+    console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
+  }
+
+  // registra timestamp da última intervenção humana
+  await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
+
+  // busca @ do cliente
+  buscarUsernameInstagram(recipientId).catch(() => {});
+
+  await pauseConversation(recipientId);
+  await clearPendingMessages(recipientId);
+  await marcarIntervencaoHumana(recipientId, echoText);
+  await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(recipientId);
+  return;
 }
-
-// Intervenção humana real
-console.log(`Intervenção humana REAL detectada para ${recipientId}`);
-const usernameIntervencao = await redisGet(`ig_username:${recipientId}`);
-
-// usa echoText já declarado 👇
-if (echoText) {
-  const hist = await getHistory(recipientId);
-  hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
-  if (hist.length > 20) hist.splice(0, 2);
-  await saveHistory(recipientId, hist);
-  console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
-}
-
-// registra timestamp da última intervenção humana
-await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
-
-// busca @ do cliente
-buscarUsernameInstagram(recipientId).catch(() => {});
-
-await pauseConversation(recipientId);
-await clearPendingMessages(recipientId);
-await marcarIntervencaoHumana(recipientId, echoText);
-await setDebounceToken(recipientId, `cancelled_${Date.now()}`);
-await cancelarFollowUp(recipientId);
-return;
 
     const senderId = messaging?.sender?.id;
     if (!senderId) return;

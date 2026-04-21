@@ -755,7 +755,7 @@ async function verificarFollowUpsPendentes() {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
 
-      await redisSet(`echo_bot:${userId}`, "1", 30);
+      await redisSet(`echo_bot:${userId}`, "1", 180);
       await sendInstagramMessage(userId, mensagem);
       await salvarUltimaRespostaBot(userId, mensagem);
       console.log(`Follow-up (worker) enviado para ${userId}`);
@@ -1410,7 +1410,7 @@ async function agendarFollowUp(userId) {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
 
-      await redisSet(`echo_bot:${userId}`, "1", 30);
+      await redisSet(`echo_bot:${userId}`, "1", 180);
       await sendInstagramMessage(userId, mensagem);
       await salvarUltimaRespostaBot(userId, mensagem);
       console.log(`Follow-up (setTimeout) enviado para ${userId}`);
@@ -1875,11 +1875,19 @@ async function processMessages(userId, myToken) {
     return;
   }
 
-  let paused = await isPaused(userId);
-  if (paused) {
+ let paused = await isPaused(userId);
+if (paused) {
+  const ultimaIntervencao = await redisGet(`ultima_intervencao:${userId}`);
+
+  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
+    await redisDel(`paused:${userId}`);
+    console.log(`Conversa com ${userId} auto-reativada durante processamento`);
+    paused = false;
+  } else {
     console.log(`Conversa com ${userId} pausada — cancelando processamento`);
     return;
   }
+}
 
   if (await isGloballyPaused()) {
     console.log(`Bot pausado globalmente — cancelando processamento para ${userId}`);
@@ -2111,7 +2119,7 @@ if (escalation) {
   }
 
   await markLastReply(userId, cleanReply);
-  await redisSet(`echo_bot:${userId}`, "1", 30);
+  await redisSet(`echo_bot:${userId}`, "1", 180);
   await sendInstagramMessage(userId, cleanReply);
   await salvarUltimaRespostaBot(userId, cleanReply);
 
@@ -2172,15 +2180,21 @@ app.post("/", async (req, res) => {
 
     if (messaging?.read || messaging?.delivery || messaging?.message_edit) return;
 
-    if (messaging?.message?.is_echo) {
-      const recipientId = messaging?.recipient?.id;
-      const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
+   if (messaging?.message?.is_echo) {
+  const recipientId = messaging?.recipient?.id;
+  const echoDoBot = await redisGet(`echo_bot:${recipientId}`);
+  const echoText = messaging?.message?.text;
 
-      if (echoDoBot) {
-        await redisDel(`echo_bot:${recipientId}`);
-        console.log(`Echo do bot ignorado para ${recipientId}`);
-        return;
-      }
+  if (echoDoBot) {
+    await redisDel(`echo_bot:${recipientId}`);
+    console.log(`Echo do bot ignorado para ${recipientId}`);
+    return;
+  }
+
+  if (!echoText || echoText.trim() === "") {
+    console.log(`Echo sem texto ignorado para ${recipientId}`);
+    return;
+  }
 
       // Deduplicação: ignora echo duplicado do Instagram (mesmo mid)
       const echoMid = messaging?.message?.mid;
@@ -2233,11 +2247,17 @@ app.post("/", async (req, res) => {
       return;
     }
 
-    const paused = await isPaused(senderId);
-    if (paused) {
-      console.log(`Conversa com ${senderId} pausada — ignorando`);
-      return;
-    }
+   if (await isPaused(senderId)) {
+  const ultimaIntervencao = await redisGet(`ultima_intervencao:${senderId}`);
+
+  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
+    await redisDel(`paused:${senderId}`);
+    console.log(`Conversa com ${senderId} auto-reativada após pausa antiga`);
+  } else {
+    console.log(`Conversa com ${senderId} pausada — ignorando`);
+    return;
+  }
+}
 
     const messageId = messaging?.message?.mid;
     if (messageId) {

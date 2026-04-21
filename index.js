@@ -619,25 +619,43 @@ async function enviarRelatorioSemanal() {
 
 // ─── Agendamentos ─────────────────────────────────────────────────────────────
 
-function agendarLimpezaSemanal() {
-  function calcularProximaSegunda10h() {
+function agendarLimpezaDiaria() {
+  function msAte10h() {
     const now = new Date();
-    const nowBrasilia = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-    const diaSemana = nowBrasilia.getDay();
-    const hora = nowBrasilia.getHours();
-    const minuto = nowBrasilia.getMinutes();
+    const brt = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
 
-    let diasAteSegunda = (1 - diaSemana + 7) % 7;
-    if (diasAteSegunda === 0 && (hora > 10 || (hora === 10 && minuto > 0))) {
-      diasAteSegunda = 7;
+    const target = new Date(brt);
+    target.setHours(10, 0, 0, 0);
+
+    if (target <= brt) {
+      target.setDate(target.getDate() + 1);
     }
 
-    const proximaSegunda = new Date(nowBrasilia);
-    proximaSegunda.setDate(nowBrasilia.getDate() + diasAteSegunda);
-    proximaSegunda.setHours(10, 0, 0, 0);
-    return proximaSegunda.getTime() - nowBrasilia.getTime();
+    return target.getTime() - brt.getTime();
   }
 
+  async function executar() {
+    try {
+      const removidas = await limparReservasAntigas();
+
+      if (removidas > 0) {
+        await notifyOwner(`🗑 ${removidas} reserva(s) antiga(s) removida(s).`);
+      } else {
+        console.log("Limpeza automática concluída: 0 reservas removidas.");
+      }
+
+    } catch (err) {
+      await notifyOwner(`⚠️ Erro na limpeza automática: ${err.message}`);
+    }
+
+    setTimeout(executar, msAte10h());
+  }
+
+  const ms = msAte10h();
+  console.log(`Limpeza automática diária agendada em ${Math.round(ms / 3600000)}h`);
+
+  setTimeout(executar, ms);
+}
   function executarLimpeza() {
     console.log("Executando limpeza automatica semanal...");
     limparReservasAntigas()
@@ -985,13 +1003,18 @@ Datas que requerem verificação:
 - 10/06 e 11/06 (Corpus Christi)
 - 14/11 e 15/11 (Proclamação da República)
 - 19/11 e 20/11 (Consciência Negra)
+
 Segundas que são feriado (07/09, 12/10, 02/11): informar que não abrimos segundas.
-Quando escalar: responder apenas "Deixa eu verificar a disponibilidade pra essa data — em breve retornamos!" Não fazer perguntas adicionais.
-[ESCALAR: motivo=Reserva para feriado ou véspera de feriado]
+
+Se o cliente perguntar sobre reserva, horário de funcionamento, música, programação, abertura da casa ou qualquer informação operacional referente a essas datas, NÃO responder com base nas regras normais.
+Quando isso acontecer, escalar sempre.
+
+Quando escalar: responder apenas "Deixa eu verificar essa informação pra vocês — em breve retornamos!" sem fazer perguntas adicionais.
+[ESCALAR: motivo=Cliente perguntou sobre funcionamento, programação ou reserva em feriado ou véspera de feriado]
 
 MÚSICOS QUE SE CANDIDATAM
 Se alguém se apresentar como músico interessado em tocar no Candiá:
-"A gente ama essa energia dos músicos de BH! 🎶 No momento estamos com a agenda bem preenchida com a galera que já toca aqui, mas deixa seu material registrado — havendo oportunidade, a gente entra em contato!"
+"A gente ama a energia dos músicos de BH! 🎶 No momento estamos com uma parceria bem legal com a galera que já toca aqui e, infelizmente, não temos agenda disponível 🥹 Por favor, nos envie por aqui o seu material e havendo oportunidade, a gente entra em contato!"
 Não escalar. Não continuar o papo além disso.
 
 VAGA DE GARÇOM OU FREELANCER
@@ -1447,18 +1470,24 @@ async function handleTelegramCommand(text) {
     return;
   }
 
-  if (cmd.startsWith("/liberar ")) {
-    const userId = raw.split(" ")[1]?.trim();
-    if (!userId) { await notifyOwner("⚠️ Use: /liberar USER_ID"); return; }
-    await redisDel(`paused:${userId}`);
-    await redisDel(`humano_encerrou:${userId}`);
-    await redisDel(`humano_informou:${userId}`);
-    await redisDel(`followup:${userId}`);
-    await redisDel(`debounce:${userId}`);
-    await redisDel(`pending:${userId}`);
-    await notifyOwner(`✅ Usuário liberado: ${userId}`);
+if (cmd.startsWith("/liberar ")) {
+  const userId = raw.split(" ")[1]?.trim();
+  if (!userId) {
+    await notifyOwner("⚠️ Use: /liberar USER_ID");
     return;
   }
+
+  await redisDel(`paused:${userId}`);
+  await redisDel(`humano_encerrou:${userId}`);
+  await redisDel(`humano_informou:${userId}`);
+  await redisDel(`followup:${userId}`);
+  await redisDel(`debounce:${userId}`);
+  await redisDel(`pending:${userId}`);
+  await limparConversaEscalada(userId);
+
+  await notifyOwner(`✅ Usuário liberado: ${userId}`);
+  return;
+}
 
   if (cmd === "/pausar") {
     await redisSet("global:paused", "1", 86400 * 7);
@@ -1903,10 +1932,22 @@ async function processMessages(userId, myToken) {
   }
 
   // busca regras especiais do dia atual
-  const todayISO = getTodayISO();
-  const regrasDiaHoje = await getRegraDia(todayISO);
+function getPrimaryDate(explicitDates) {
+  if (!explicitDates || explicitDates.length === 0) return null;
+  return explicitDates[0];
+}
 
-  let systemPrompt = getSystemPrompt(disponibilidadeInfo || null, regrasDiaHoje);
+const dataPrincipal = getPrimaryDate(explicitDates);
+const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
+
+const regrasDiaConsulta = dataISOConsulta
+  ? await getRegraDia(dataISOConsulta)
+  : null;
+
+let systemPrompt = getSystemPrompt(
+  disponibilidadeInfo || null,
+  regrasDiaConsulta
+);
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
   if (contatoDetectado) {
@@ -2031,11 +2072,21 @@ async function processMessages(userId, myToken) {
   }
 
   const escalation = extractEscalation(reply);
-  if (escalation) {
-    await notifyOwner(
-      `Atencao — cliente aguarda retorno!\nMotivo: ${escalation.motivo}\nID do cliente: ${userId}\nUltima mensagem: "${combinedMessage}"`
-    );
-  }
+
+if (escalation) {
+  await notifyOwner(
+    `⚠️ Escalonar conversa com ${userId}\nMotivo: ${escalation.motivo || "Sem motivo"}`
+  );
+
+  await marcarConversaEscalada(userId, escalation.motivo || "");
+  await clearPendingMessages(userId);
+  await setDebounceToken(userId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(userId);
+
+  console.log(`Conversa ${userId} marcada como escalada.`);
+
+  return; // 🔥 NÃO RESPONDE AO CLIENTE
+}
 
   const cleanReply = reply
     .replace(/\[RESERVA:.*?\]/gs, "")
@@ -2218,36 +2269,53 @@ app.post("/", async (req, res) => {
       }
     }
 
-    if (await redisGet(`reserva_confirmada:${senderId}`)) {
-      console.log(`Cliente ${senderId} já tem reserva — mantendo atendimento normal`);
+  if (await redisGet(`reserva_confirmada:${senderId}`)) {
+  console.log(`Cliente ${senderId} já tem reserva — mantendo atendimento normal`);
+}
+
+const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
+const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
+
+// story mention: ignorar silenciosamente (será repostado pelo dono)
+const isStoryMention = messaging?.message?.attachments?.some(a => a.type === "story_mention");
+if (isStoryMention) {
+  console.log(`Story mention ignorado de ${senderId}`);
+  return;
+}
+
+// lead vindo de anúncio: responder antes do bloqueio de mídia/card
+const referral = messaging?.referral;
+if (referral) {
+  console.log(`Lead vindo de anúncio: ${senderId}`);
+
+  await redisSet(`echo_bot:${senderId}`, "1", 30);
+
+  const saudacaoAnuncio = "Oi! Como podemos ajudar? 😊";
+  await sendInstagramMessage(senderId, saudacaoAnuncio);
+  await salvarUltimaRespostaBot(senderId, saudacaoAnuncio);
+
+  return;
+}
+
+const hasMedia = !message && (
+  messaging?.message?.sticker_id ||
+  messaging?.message?.attachments?.some(a => a.type !== "fallback")
+);
+
+if (hasMedia && !isOnlyPhoneNumber(message)) {
+  if (aguardandoContato || contatoDetectado) {
+    console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
+    return;
+  } else {
+    if (await isHorarioComercial()) {
+      await sendInstagramMessage(
+        senderId,
+        "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
+      );
     }
-
-    const aguardandoContato = await redisGet(`aguardando_contato:${senderId}`);
-    const contatoDetectado = await redisGet(`contato_detectado:${senderId}`);
-
-    // story mention: ignorar silenciosamente (será repostado pelo dono)
-    const isStoryMention = messaging?.message?.attachments?.some(a => a.type === "story_mention");
-    if (isStoryMention) {
-      console.log(`Story mention ignorado de ${senderId}`);
-      return;
-    }
-
-    const hasMedia = !message && (
-      messaging?.message?.sticker_id ||
-      messaging?.message?.attachments?.some(a => a.type !== "fallback")
-    );
-
-    if (hasMedia && !isOnlyPhoneNumber(message)) {
-      if (aguardandoContato || contatoDetectado) {
-        console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
-        return;
-      } else {
-        if (await isHorarioComercial()) {
-          await sendInstagramMessage(senderId, "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!");
-        }
-        return;
-      }
-    }
+    return;
+  }
+}
 
     // anúncio (referral): cliente clicou num ad sem enviar texto — responder com saudação
     if (!message) {
@@ -2262,10 +2330,25 @@ app.post("/", async (req, res) => {
       return;
     }
 
-    if (detectCancelamento(message)) {
-      console.log(`Cancelamento detectado de ${senderId}`);
-      await cancelarReservaNoNotion(senderId);
-    }
+if (detectCancelamento(message)) {
+  console.log(`Cancelamento detectado de ${senderId}`);
+
+  const username = await redisGet(`ig_username:${senderId}`);
+
+  await notifyOwner(
+    `⚠️ Cliente quer cancelar reserva\nID: ${senderId}\n@${username || "sem_username"}`
+  );
+
+  // evita echo
+  await redisSet(`echo_bot:${senderId}`, "1", 30);
+
+  await sendInstagramMessage(
+    senderId,
+    "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!"
+  );
+
+  return; // 🔥 IMPORTANTE: para aqui
+}
 
     // se cliente com reserva confirmada mandar mensagem de atraso, ignorar silenciosamente
     if (await redisGet(`reserva_confirmada:${senderId}`) && detectAtraso(message)) {
@@ -2301,7 +2384,7 @@ app.post("/", async (req, res) => {
 
 app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
-  agendarLimpezaSemanal();
+  agendarLimpezaDiaria();
   agendarRotinasDiarias();
   agendarVerificacaoHorario();
   notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});

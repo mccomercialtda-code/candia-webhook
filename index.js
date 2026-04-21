@@ -656,19 +656,7 @@ function agendarLimpezaDiaria() {
 
   setTimeout(executar, ms);
 }
-  function executarLimpeza() {
-    console.log("Executando limpeza automatica semanal...");
-    limparReservasAntigas()
-      .then(n => notifyOwner(`🗑 Limpeza automática concluída: ${n} reserva(s) antiga(s) removida(s).`))
-      .catch(err => notifyOwner(`⚠️ Erro na limpeza automática: ${err.message}`));
-    setTimeout(executarLimpeza, calcularProximaSegunda10h());
-  }
-
-  const ms = calcularProximaSegunda10h();
-  console.log(`Limpeza automática agendada em ${Math.round(ms / 3600000)}h`);
-  setTimeout(executarLimpeza, ms);
-}
-
+ 
 function agendarRotinasDiarias() {
   function msAteHorario(hora, minuto = 0) {
     const now = new Date();

@@ -1328,9 +1328,12 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  // pausa permanente — só é removida pelo /reativar
-  await redisSet(`paused:${userId}`, "1", 86400 * 30);
-  console.log(`Conversa com ${userId} pausada indefinidamente (use /reativar)`);
+  // pausa temporária por 2 horas após intervenção humana
+  const ttl = 60 * 60 * 2; // 2h em segundos
+
+  await redisSet(`paused:${userId}`, "1", ttl);
+
+  console.log(`Conversa com ${userId} pausada por ${ttl / 3600} horas`);
 }
 
 async function getPendingMessages(userId) {
@@ -1470,8 +1473,15 @@ if (cmd.startsWith("/liberar ")) {
   await redisDel(`humano_informou:${userId}`);
   await redisDel(`followup:${userId}`);
   await redisDel(`debounce:${userId}`);
-  await redisDel(`pending:${userId}`);
   await limparConversaEscalada(userId);
+
+  // 👇 AGORA SIM (depois de liberar)
+  const pending = await getPendingMessages(userId);
+  if (pending.length > 0) {
+    const newToken = `${userId}_${Date.now()}`;
+    await setDebounceToken(userId, newToken);
+    processMessages(userId, newToken);
+  }
 
   await notifyOwner(`✅ Usuário liberado: ${userId}`);
   return;
@@ -2348,9 +2358,16 @@ if (detectCancelamento(message)) {
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
 
     if (await isPaused(senderId)) {
-      console.log(`Conversa com ${senderId} pausada — mensagem enfileirada, aguardando expiração`);
-      return;
-    }
+  const ultimaIntervencao = await redisGet(`ultima_intervencao:${senderId}`);
+
+  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
+    await redisDel(`paused:${senderId}`);
+    console.log(`Conversa com ${senderId} auto-reativada após pausa antiga`);
+  } else {
+    console.log(`Conversa com ${senderId} pausada — ignorando`);
+    return;
+  }
+}
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
 

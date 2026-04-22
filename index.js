@@ -667,15 +667,7 @@ function agendarRotinasDiarias() {
     return target.getTime() - brt.getTime();
   }
 
-  function agendarLembretes() {
-    const ms = msAteHorario(9, 0);
-    console.log(`Lembretes agendados em ${Math.round(ms / 3600000)}h`);
-    setTimeout(() => {
-      enviarLembretes2Dias().catch(err => console.error("Erro nos lembretes:", err));
-      setTimeout(agendarLembretes, 1000);
-    }, ms);
-  }
-
+  
   function agendarResumo() {
     const ms = msAteHorario(22, 1);
     console.log(`Resumo diário agendado em ${Math.round(ms / 3600000)}h`);
@@ -712,7 +704,6 @@ function agendarRotinasDiarias() {
     }
   }
 
-  agendarLembretes();
   agendarResumo();
   agendarRelatorioSemanal();
 }

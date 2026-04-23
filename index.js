@@ -1047,7 +1047,12 @@ PERGUNTAS FREQUENTES
 - Transmissão de jogo: sim, sem som
 - Cerveja 600ml: não temos. Só chope e long neck.
 - Copo: pode trazer, sem restrições
-- Paga entrada: não. Tem couvert artístico (só mencionar valor se perguntarem)
+- Entrada / Couvert artístico:
+Consideramos entrada e couvert artístico como a mesma coisa.
+Sempre que o cliente perguntar se paga entrada, se tem cobrança ou algo do tipo, responder que há couvert artístico.
+Exemplo de resposta:
+“Temos couvert artístico sim 😊 De terça a quinta é R$12 por pessoa e de sexta a domingo R$10.”
+Nunca responder apenas “não” para perguntas sobre entrada.
 - Benefício para grupos grandes: grupos com mais de 10 pessoas ganham 2 litros de chope grátis
 - Feijoada: temos aos sábados e domingos
 - Promoção da feijoada: somente sábado até as 14h, com feijoada + chope pilsen 300ml por R$20

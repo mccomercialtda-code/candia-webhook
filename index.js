@@ -2355,18 +2355,6 @@ if (isStoryMention) {
 }
 
 // lead vindo de anúncio: responder antes do bloqueio de mídia/card
-const referral = messaging?.referral;
-if (referral) {
-  console.log(`Lead vindo de anúncio: ${senderId}`);
-
-  await redisSet(`echo_bot:${senderId}`, "1", 30);
-
-  const saudacaoAnuncio = "Oi! Como podemos ajudar? 😊";
-  await sendInstagramMessage(senderId, saudacaoAnuncio);
-  await salvarUltimaRespostaBot(senderId, saudacaoAnuncio);
-
-  return;
-}
 
 const hasMedia = !message && (
   messaging?.message?.sticker_id ||

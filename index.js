@@ -1684,10 +1684,69 @@ if (cmd.startsWith("/liberar ")) {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 512,
-          system: `Extraia dados de reserva do histórico de conversa. Retorne SOMENTE JSON válido, sem nenhum texto antes ou depois, sem markdown, sem backticks. Formato exato:
-{"encontrou":true,"data":"DD/MM/AAAA","dia":"dia da semana","aniversariante":"nome","contato":"telefone","lugares":8,"total_esperado":10,"observacao":""}
-Se não houver dados suficientes: {"encontrou":false}
-IMPORTANTE: responda APENAS com o JSON. Nenhuma palavra antes ou depois.`,
+          system: `Você vai extrair dados de uma reserva a partir do histórico de conversa de um cliente do Candiá Bar.
+
+Seu objetivo é identificar se já existem dados suficientes para registrar a reserva no sistema.
+
+Considere como suficientes os seguintes campos:
+- data
+- aniversariante
+- contato
+- total_esperado
+
+Campos desejáveis, mas que podem ser inferidos se necessário:
+- dia
+- lugares
+- observacao
+
+REGRAS IMPORTANTES:
+
+1. Aceite datas em formatos como:
+- DD/MM/AAAA
+- DD/MM/AA
+- DD-MM-AAAA
+- DD-MM-AA
+
+Se a data vier com ano de 2 dígitos, converta para 4 dígitos assumindo 20XX.
+Exemplo:
+15/05/26 -> 15/05/2026
+
+2. Se o dia da semana não estiver escrito, calcule a partir da data e retorne em maiúsculas.
+Exemplo:
+15/05/2026 -> SEXTA
+
+3. Se houver apenas um número de pessoas no texto, use esse valor tanto para:
+- lugares
+- total_esperado
+
+Exemplo:
+“20 convidados” -> lugares=20 e total_esperado=20
+
+4. Interprete expressões equivalentes como quantidade de pessoas:
+- convidados
+- pessoas
+- previsão de convidados
+- total de pessoas
+
+5. Interprete telefone mesmo que venha com espaços, parênteses ou hífen.
+Retorne apenas números.
+Exemplo:
+31 98471-7364 -> 31984717364
+
+6. “Nome completo” ou nome informado junto com outros dados deve ser tratado como aniversariante.
+
+7. Se observação não existir de forma clara, retorne observacao como string vazia.
+
+8. Só retorne encontrou=false se realmente faltarem dados essenciais para registrar a reserva.
+Se houver data + nome + telefone + quantidade de pessoas, considere que encontrou=true.
+
+9. Responda apenas em JSON válido, sem explicações, sem markdown.
+
+Formato da resposta:
+{"encontrou":true,"data":"DD/MM/AAAA","dia":"DIASEMANA","aniversariante":"NOME","contato":"SOMENTE NUMEROS","lugares":NUMERO,"total_esperado":NUMERO,"observacao":""}
+
+Se realmente não houver dados suficientes, responda:
+{"encontrou":false}`
           messages: [
             { role: "user", content: "Histórico da conversa:\n" + hist.map(h => h.role + ": " + h.content).join("\n") }
           ]

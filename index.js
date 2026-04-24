@@ -944,6 +944,24 @@ RESERVAS
 * Sem reserva → ordem de chegada
 * Sempre informar horário limite
 
+BOLO / TORTA / DOCE
+
+Se o cliente perguntar se pode levar bolo, torta ou doce:
+"Pode trazer sim 😉 Só não conseguimos garantir espaço na geladeira — guardamos por ordem de chegada. Se quando você chegar não houver espaço, você pode deixar na sua mesa mesmo. 😉 Só um detalhe: pratinhos e talheres a gente não tem, só guardanapos - então vale trazer o de vocês!."
+
+Se o cliente pedir para:
+- enviar bolo por Uber, táxi, motoboy
+- deixar bolo antes de chegar
+- pedir para a equipe receber ou guardar
+
+NÃO confirmar.
+
+Responder:
+"Deixa eu verificar isso com a equipe pra você — em breve retornamos 😊"
+
+E incluir:
+[ESCALAR: motivo=Pedido de entrega/armazenamento de item]
+
 HORÁRIO DE RESERVAS (CRÍTICO)
 
 - Terça a Quinta reservas seguradas até 19h (se cliente insistir, conseguimos segurar ate as 19:30hs)
@@ -997,6 +1015,24 @@ Vamos deixar seu material registrado por aqui e, pintando oportunidade, te chama
 * Não escalar
 * Não gerar follow-up
 * Não prolongar conversa
+
+PEDIDOS FORA DO PADRÃO / LOGÍSTICA ESPECIAL
+
+Se o cliente pedir qualquer exceção operacional ou logística fora do comum, NÃO assumir que é possível.
+
+Exemplos:
+- enviar bolo por táxi, Uber, motoboy
+- deixar bolo antes do horário
+- receber itens antes do cliente chegar
+- guardar objetos, presentes ou decoração
+- qualquer entrega sem o cliente presente
+- pedidos que envolvam responsabilidade da equipe sobre itens do cliente
+
+Nesses casos, responder apenas:
+"Deixa eu verificar isso com a equipe pra você — em breve retornamos 😊"
+
+E incluir no final:
+[ESCALAR: motivo=Pedido fora do padrão]
 
 ENCERRAMENTO
 
@@ -2052,17 +2088,83 @@ let systemPrompt = getSystemPrompt(
 
   const reservation = extractReservation(reply);
   if (reservation) {
-    const salvou = await salvarReservaNaNotion(reservation, userId);
-    if (salvou) {
-      await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
-      await clearPendingMessages(userId);
-      await redisDel(`aguardando_contato:${userId}`);
-      await redisDel(`contato_detectado:${userId}`);
-      console.log(`Reserva concluída e estados limpos para ${userId}`);
-    } else {
-      console.log(`⚠️ Falha ao salvar reserva para ${userId} — owner notificado`);
-    }
+  const dispFinal = await verificarDisponibilidade(reservation.data);
+
+  if (!dispFinal.disponivel) {
+    const msgEsgotado =
+      "Poxa, enquanto a gente confirmava os dados, as reservas para esse dia esgotaram 😕\n" +
+      "Mas a casa funciona por ordem de chegada também, então vocês ainda podem vir curtir com a gente.";
+
+    await notifyOwner(
+      `⚠️ Reserva bloqueada por falta de disponibilidade\n` +
+      `Cliente: ${userId}\n` +
+      `Data: ${reservation.data}\n` +
+      `Nome: ${reservation.aniversariante}\n` +
+      `Lugares: ${reservation.lugares} | Total: ${reservation.total_esperado}`
+    );
+
+    await redisSet(`echo_bot:${userId}`, "1", 180);
+    await sendInstagramMessage(userId, msgEsgotado);
+    await salvarUltimaRespostaBot(userId, msgEsgotado);
+
+    await clearPendingMessages(userId);
+    await redisDel(`aguardando_contato:${userId}`);
+    await redisDel(`contato_detectado:${userId}`);
+    await cancelarFollowUp(userId);
+
+    return;
   }
+
+  if (dispFinal.tipo === "descoberto") {
+    const obs = (reservation.observacao || "").toLowerCase();
+
+    const aceitouExterna =
+      obs.includes("externa") ||
+      obs.includes("descoberta") ||
+      obs.includes("aceitou área externa") ||
+      obs.includes("aceitou area externa");
+
+    if (!aceitouExterna) {
+      const msgExterna =
+        "Temos disponibilidade para esse dia, mas agora somente na área externa/descoberta.\n" +
+        "Podemos seguir com a reserva assim?";
+
+      await notifyOwner(
+        `⚠️ Reserva aguardando aceite de área externa\n` +
+        `Cliente: ${userId}\n` +
+        `Data: ${reservation.data}\n` +
+        `Nome: ${reservation.aniversariante}\n` +
+        `Lugares: ${reservation.lugares} | Total: ${reservation.total_esperado}`
+      );
+
+      await redisSet(`echo_bot:${userId}`, "1", 180);
+      await sendInstagramMessage(userId, msgExterna);
+      await salvarUltimaRespostaBot(userId, msgExterna);
+
+      await clearPendingMessages(userId);
+      await cancelarFollowUp(userId);
+
+      return;
+    }
+
+    reservation.observacao = reservation.observacao
+      ? `${reservation.observacao} | Área externa (descoberta)`
+      : "Área externa (descoberta)";
+  }
+
+  const salvou = await salvarReservaNaNotion(reservation, userId);
+
+  if (salvou) {
+    await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
+    await clearPendingMessages(userId);
+    await redisDel(`aguardando_contato:${userId}`);
+    await redisDel(`contato_detectado:${userId}`);
+    await cancelarFollowUp(userId);
+    console.log(`Reserva concluída e estados limpos para ${userId}`);
+  } else {
+    console.log(`⚠️ Falha ao salvar reserva para ${userId} — owner notificado`);
+  }
+}
 
   const escalation = extractEscalation(reply);
 

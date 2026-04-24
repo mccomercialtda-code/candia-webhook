@@ -1005,6 +1005,7 @@ ENCERRAMENTO
 * Depois não responder mais
 
 Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
+ }
 
 
 

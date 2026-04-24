@@ -1678,7 +1678,7 @@ Formato da resposta:
 {"encontrou":true,"data":"DD/MM/AAAA","dia":"DIASEMANA","aniversariante":"NOME","contato":"SOMENTE NUMEROS","lugares":NUMERO,"total_esperado":NUMERO,"observacao":""}
 
 Se realmente não houver dados suficientes, responda:
-{"encontrou":false}`
+{"encontrou":false}`,
           messages: [
             { role: "user", content: "Histórico da conversa:\n" + hist.map(h => h.role + ": " + h.content).join("\n") }
           ]

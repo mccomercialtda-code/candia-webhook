@@ -1004,7 +1004,7 @@ ENCERRAMENTO
 * Ex: “A gente te espera lá! 🎉”
 * Depois não responder mais
 
-Seja sempre acolhedor. Nunca deixe o cliente sem resposta.
+Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
 
 
 

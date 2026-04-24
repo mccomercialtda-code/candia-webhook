@@ -938,6 +938,18 @@ DISPONIBILIDADE
 * Só mencionar área externa se for a única opção
 * Nunca falar “área interna”
 
+ESGOTADO / SEM RESERVAS DISPONÍVEIS
+
+Se as reservas estiverem esgotadas, nunca dizer que o cliente não pode vir.
+
+Responder de forma leve:
+"Hoje infelizmente as reservas já estão esgotadas 😕 Ainda temos algumas mesas disponiveis por ordem de chegada, mas como a galera aqui fica mais em pé mesmo pode chegar que sempre cabe todo mundo 💙"
+
+Nunca usar frases como:
+- "não conseguimos encaixar mais ninguém"
+- "não tem como"
+- "não dá para receber vocês"
+
 RESERVAS
 
 * Uma mesa por reserva
@@ -1934,9 +1946,27 @@ if (paused) {
   await cancelarFollowUp(userId);
 
   const history = await getHistory(userId);
-  const explicitDates = extractDatesFromConversation(combinedMessage, history);
+ const explicitDates = extractDatesFromConversation(combinedMessage, history);
 
-  let disponibilidadeInfo = "";
+const jaTemReserva = await redisGet(`reserva_confirmada:${userId}`);
+
+const textoLower = combinedMessage.toLowerCase();
+
+const querAlterarReserva =
+  textoLower.includes("alterar") ||
+  textoLower.includes("mudar") ||
+  textoLower.includes("trocar") ||
+  textoLower.includes("remarcar") ||
+  textoLower.includes("cancelar") ||
+  textoLower.includes("cancelamento") ||
+  textoLower.includes("aumentar") ||
+  textoLower.includes("diminuir") ||
+  textoLower.includes("mais pessoas") ||
+  textoLower.includes("menos pessoas");
+
+let disponibilidadeInfo = "";
+
+if (!jaTemReserva || querAlterarReserva) {
   for (const data of explicitDates) {
     const disp = await verificarDisponibilidade(data);
     console.log(`Disponibilidade para ${data}:`, disp);
@@ -1948,8 +1978,9 @@ if (paused) {
       disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
     } else {
       disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
-    }
+      }
   }
+}
 
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);

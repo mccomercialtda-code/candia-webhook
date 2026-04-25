@@ -844,16 +844,24 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
   const programacaoInfo = programacao && programacao.length > 0 ? (() => {
     const linhas = programacao.map(p => {
       const artista = p.properties?.Artista?.title?.[0]?.text?.content || "A confirmar";
-      const horario = p.properties?.Horario?.rich_text?.[0]?.text?.content || "";
-      const estilo = p.properties?.Estilo?.rich_text?.[0]?.text?.content || "";
-      const instagram = p.properties?.Instagram?.rich_text?.[0]?.text?.content || "";
-      const partes = [artista];
-      if (horario) partes.push(`às ${horario}`);
+      // Horario pode ser rich_text ou date dependendo do tipo no Notion
+      const horarioProp = p.properties?.Horario;
+      const horario = (
+        horarioProp?.rich_text?.[0]?.text?.content ||
+        horarioProp?.date?.start ||
+        ""
+      ).trim();
+      const estilo = (p.properties?.Estilo?.rich_text?.[0]?.text?.content || "").trim();
+      const igRaw = (p.properties?.Instagram?.rich_text?.[0]?.text?.content || "").trim();
+      const instagram = igRaw ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`) : "";
+      // formata: @instagram — horario — estilo
+      const partes = [];
+      partes.push(instagram || artista);
+      if (horario) partes.push(horario);
       if (estilo) partes.push(estilo);
-      if (instagram) partes.push(instagram);
       return `• ${partes.join(" — ")}`;
     });
-    return `\nPROGRAMAÇÃO DO DIA\n${linhas.join("\n")}\n`;
+    return `\nPROGRAMAÇÃO DO DIA\nUse exatamente estes dados ao responder — inclua @ do artista, horário e estilo:\n${linhas.join("\n")}\n`;
   })() : "";
 
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
@@ -1960,23 +1968,35 @@ const querAlterarReserva =
   textoLower.includes("mais pessoas") ||
   textoLower.includes("menos pessoas");
 
-let disponibilidadeInfo = "";
+  // só consulta disponibilidade se a mensagem tiver contexto de reserva
+  const textoTemContextoReserva =
+    textoLower.includes("reserva") ||
+    textoLower.includes("mesa") ||
+    textoLower.includes("reservar") ||
+    textoLower.includes("lugar") ||
+    textoLower.includes("lugares") ||
+    textoLower.includes("aniversário") ||
+    textoLower.includes("aniversario") ||
+    textoLower.includes("tem vaga") ||
+    textoLower.includes("disponib") ||
+    querAlterarReserva;
 
-if (!jaTemReserva || querAlterarReserva) {
-  for (const data of explicitDates) {
-    const disp = await verificarDisponibilidade(data);
-    console.log(`Disponibilidade para ${data}:`, disp);
-    if (disp.tipo === "esgotado") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
-    } else if (disp.tipo === "descoberto") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
-    } else if (disp.tipo === "coberto") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
-    } else {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
+  let disponibilidadeInfo = "";
+  if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
+    for (const data of explicitDates) {
+      const disp = await verificarDisponibilidade(data);
+      console.log(`Disponibilidade para ${data}:`, disp);
+      if (disp.tipo === "esgotado") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
+      } else if (disp.tipo === "descoberto") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
+      } else if (disp.tipo === "coberto") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
+      } else {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
       }
+    }
   }
-}
 
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);

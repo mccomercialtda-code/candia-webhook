@@ -10,6 +10,7 @@ const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
+const NOTION_PROGRAMACAO_DB_ID = "34ddbe8049f980a8be44c3f937a912ec";
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
@@ -359,6 +360,28 @@ async function buscarReservasPorData(dataISO) {
     return data.results || [];
   } catch (err) {
     console.error("Erro ao buscar reservas:", err);
+    return [];
+  }
+}
+
+async function buscarProgramacaoPorData(dataISO) {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_PROGRAMACAO_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: { property: "Data", date: { equals: dataISO } },
+        sorts: [{ property: "Horario", direction: "ascending" }]
+      })
+    });
+    const data = await res.json();
+    return data.results || [];
+  } catch (err) {
+    console.error("Erro ao buscar programação:", err);
     return [];
   }
 }
@@ -800,7 +823,7 @@ async function processarFilaAcumulada() {
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
-function getSystemPrompt(disponibilidade, regrasDia = null) {
+function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -818,11 +841,26 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
     ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
     : "";
 
+  const programacaoInfo = programacao && programacao.length > 0 ? (() => {
+    const linhas = programacao.map(p => {
+      const artista = p.properties?.Artista?.title?.[0]?.text?.content || "A confirmar";
+      const horario = p.properties?.Horario?.rich_text?.[0]?.text?.content || "";
+      const estilo = p.properties?.Estilo?.rich_text?.[0]?.text?.content || "";
+      const instagram = p.properties?.Instagram?.rich_text?.[0]?.text?.content || "";
+      const partes = [artista];
+      if (horario) partes.push(`às ${horario}`);
+      if (estilo) partes.push(estilo);
+      if (instagram) partes.push(instagram);
+      return `• ${partes.join(" — ")}`;
+    });
+    return `\nPROGRAMAÇÃO DO DIA\n${linhas.join("\n")}\n`;
+  })() : "";
+
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-${dispInfo}${regrasEspeciaisInfo}
+${dispInfo}${regrasEspeciaisInfo}${programacaoInfo}
 
 IDENTIDADE E TOM
 
@@ -899,7 +937,9 @@ FUNCIONAMENTO
 MÚSICA AO VIVO
 
 * Sexta, sábado e domingo: samba
-* Programação: direcionar para Instagram
+* Se houver programação consultada abaixo (PROGRAMAÇÃO DO DIA), use essas informações para responder sobre quem toca, horário e estilo
+* Se não houver programação consultada, direcionar para os destaques do @ocandiabar no Instagram, tópico "agenda"
+* Nunca inventar nomes de artistas ou horários que não estejam na programação consultada
 
 COUVERT
 
@@ -1960,9 +2000,16 @@ const regrasDiaConsulta = dataISOConsulta
   ? await getRegraDia(dataISOConsulta)
   : null;
 
+// busca programação musical para datas mencionadas
+let programacaoConsulta = [];
+if (dataPrincipal) {
+  programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
+}
+
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
-  regrasDiaConsulta
+  regrasDiaConsulta,
+  programacaoConsulta.length > 0 ? programacaoConsulta : null
 );
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);

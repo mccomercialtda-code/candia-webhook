@@ -864,28 +864,58 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
     ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
     : "";
 
-  const programacaoInfo = programacao && programacao.length > 0 ? (() => {
-    const linhas = programacao.map(p => {
-      const artista = p.properties?.Artista?.title?.[0]?.text?.content || "A confirmar";
-      // Horario pode ser rich_text ou date dependendo do tipo no Notion
-      const horarioProp = p.properties?.Horario;
-      const horario = (
-        horarioProp?.rich_text?.[0]?.text?.content ||
-        horarioProp?.date?.start ||
-        ""
-      ).trim();
-      const estilo = (p.properties?.Estilo?.rich_text?.[0]?.text?.content || "").trim();
-      const igRaw = (p.properties?.Instagram?.rich_text?.[0]?.text?.content || "").trim();
-      const instagram = igRaw ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`) : "";
-      // formata: @instagram — horario — estilo
-      const partes = [];
-      partes.push(instagram || artista);
-      if (horario) partes.push(horario);
-      if (estilo) partes.push(estilo);
-      return `• ${partes.join(" — ")}`;
-    });
-    return `\nPROGRAMAÇÃO DO DIA\nUse exatamente estes dados ao responder — inclua @ do artista, horário e estilo:\n${linhas.join("\n")}\n`;
-  })() : "";
+const programacaoInfo = programacao && programacao.length > 0 ? (() => {
+  console.log("🎤 Programação recebida:", JSON.stringify(programacao, null, 2));
+
+  const linhas = programacao.map((p, i) => {
+    const props = p.properties || {};
+
+    const artista =
+      props?.Artista?.title?.[0]?.plain_text ||
+      props?.Artista?.title?.[0]?.text?.content ||
+      "A confirmar";
+
+    const horarioProp = props?.Horario;
+
+    const horario = (
+      horarioProp?.select?.name ||
+      horarioProp?.rich_text?.[0]?.plain_text ||
+      horarioProp?.rich_text?.[0]?.text?.content ||
+      horarioProp?.date?.start ||
+      ""
+    ).trim();
+
+    const estilo =
+      props?.Estilo?.rich_text?.[0]?.plain_text ||
+      props?.Estilo?.rich_text?.[0]?.text?.content ||
+      "";
+
+    const igRaw =
+      props?.Instagram?.rich_text?.[0]?.plain_text ||
+      props?.Instagram?.rich_text?.[0]?.text?.content ||
+      "";
+
+    const instagram = igRaw
+      ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`)
+      : "";
+
+    console.log(`🎶 Item ${i + 1}:`, { artista, horario, estilo, instagram });
+
+    const partes = [];
+
+    if (horario) partes.push(horario);
+    partes.push(instagram || artista);
+    if (estilo) partes.push(estilo);
+
+    return `- ${partes.join(" — ")}`;
+  });
+
+  const texto = `\nPROGRAMAÇÃO DO DIA\nUse obrigatoriamente estes dados ao responder sobre programação. Nunca diga que não tem programação se este bloco existir.\n${linhas.join("\n")}\n`;
+
+  console.log("🧾 programacaoInfo FINAL:", texto);
+
+  return texto;
+})() : "";
 
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
@@ -969,6 +999,8 @@ MÚSICA AO VIVO
 
 * Sexta, sábado e domingo: samba
 * Se houver programação consultada abaixo (PROGRAMAÇÃO DO DIA), use essas informações para responder sobre quem toca, horário e estilo
+*Se existir PROGRAMAÇÃO DO DIA no prompt, nunca diga que não tem a programação.
+*Mesmo que algum artista esteja como “A confirmar”, informe os horários disponíveis e diga “atração a confirmar” naquele horário.
 * Se não houver programação consultada, direcionar para os destaques do @ocandiabar no Instagram, tópico "agenda"
 * Nunca inventar nomes de artistas ou horários que não estejam na programação consultada
 
@@ -2049,10 +2081,35 @@ if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
 }
 
+let programacaoInfo = "";
+
+console.log("🎤 programacaoConsulta:", JSON.stringify(programacaoConsulta, null, 2));
+
+if (programacaoConsulta && programacaoConsulta.length > 0) {
+  programacaoInfo = `\n🎶 PROGRAMAÇÃO DO DIA ${dataPrincipal}:\n`;
+
+  programacaoConsulta.forEach((item, i) => {
+    const props = item.properties;
+
+    const artista = props?.Artista?.title?.[0]?.plain_text || "A confirmar";
+    const estilo = props?.Estilo?.rich_text?.[0]?.plain_text || "";
+
+    const horario = (
+      props?.Horario?.select?.name ||
+      props?.Horario?.rich_text?.[0]?.plain_text ||
+      ""
+    ).trim();
+
+    programacaoInfo += `- ${horario || "Horário a definir"} — ${artista}${estilo ? ` (${estilo})` : ""}\n`;
+  });
+}
+
+console.log("🧾 programacaoInfo FINAL:", programacaoInfo);
+  
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
   regrasDiaConsulta,
-  programacaoConsulta.length > 0 ? programacaoConsulta : null
+  programacaoInfo || null
 );
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);

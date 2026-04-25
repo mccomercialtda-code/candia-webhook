@@ -814,16 +814,9 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
     ? `\nDISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA\n${disponibilidade}\n`
     : "";
 
-  const regrasEspeciaisInfo = regrasDia ? (() => {
-    const linhas = ["\nREGRAS ESPECIAIS PARA HOJE"];
-    if (regrasDia.horario_funcionamento) linhas.push(`Horário de funcionamento hoje: ${regrasDia.horario_funcionamento}`);
-    if (regrasDia.horario_musica) linhas.push(`Horário da música hoje: ${regrasDia.horario_musica}`);
-    if (regrasDia.horario_reservas) linhas.push(`Reservas seguradas até: ${regrasDia.horario_reservas}`);
-    if (regrasDia.limite_reservas) linhas.push(`Limite de reservas hoje: ${regrasDia.limite_reservas}`);
-    if (regrasDia.mensagem_especial) linhas.push(`Mensagem especial para este dia: ${regrasDia.mensagem_especial}`);
-    linhas.push("Use estas informações ao invés das regras padrão para hoje.\n");
-    return linhas.join("\n");
-  })() : "";
+  const regrasEspeciaisInfo = regrasDia?.briefing
+    ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
+    : "";
 
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
@@ -856,6 +849,7 @@ REGRA GERAL
 * Nunca sugerir nada que o cliente não pediu
 * Respostas curtas e naturais
 * Soar humano, não institucional
+* Nunca mencionar o dia da semana ao responder sobre datas — se o cliente perguntar sobre o dia 30/04, não dizer "dia 30 é quinta-feira". Responder direto ao assunto
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -1089,6 +1083,8 @@ function detectAtraso(text) {
     t.includes("chamei o uber") ||
     t.includes("peguei o uber") ||
     t.includes("no uber") ||
+    t.includes("meu uber") ||
+    t.includes("uber atrasou") ||
     t.includes("trânsito") ||
     t.includes("transito") ||
     t.includes("engarrafamento") ||
@@ -1104,7 +1100,16 @@ function detectAtraso(text) {
     t.includes("chego às") ||
     t.includes("chego as ") ||
     t.includes("chegando em") ||
-    t.includes("chegando logo")
+    t.includes("chegando logo") ||
+    t.includes("vou chegar às") ||
+    t.includes("vou chegar as ") ||
+    t.includes("podem segurar") ||
+    t.includes("pode segurar") ||
+    t.includes("segura minha mesa") ||
+    t.includes("segura a mesa") ||
+    t.includes("atrasei") ||
+    t.includes("atrasada") ||
+    t.includes("atrasado")
   );
 }
 
@@ -1585,33 +1590,15 @@ if (cmd.startsWith("/liberar ")) {
     // verifica se já tem regras salvas
     const regraAtual = await getRegraDia(dataISO);
     let msgAtual = "";
-    if (regraAtual) {
-      const linhas = [];
-      if (regraAtual.horario_funcionamento) linhas.push(`Horário funcionamento: ${regraAtual.horario_funcionamento}`);
-      if (regraAtual.horario_musica) linhas.push(`Horário música: ${regraAtual.horario_musica}`);
-      if (regraAtual.horario_reservas) linhas.push(`Horário reservas: ${regraAtual.horario_reservas}`);
-      if (regraAtual.limite_reservas) linhas.push(`Limite de reservas: ${regraAtual.limite_reservas}`);
-      if (regraAtual.mensagem_especial) linhas.push(`Mensagem especial: ${regraAtual.mensagem_especial}`);
-      msgAtual = "\n\n⚙️ Regras atuais:\n" + linhas.join("\n");
+    if (regraAtual?.briefing) {
+      msgAtual = `\n\n⚙️ Briefing atual:\n"${regraAtual.briefing}"`;
     }
 
     await redisSet("telegram:aguardando_dia", dataISO, 300);
     await notifyOwner(
-      `📅 Configuração especial para ${formatDateBR(dataISO)}${msgAtual}
-
-` +
-      `Responda preenchendo o que quiser alterar (deixe em branco o que não mudar):
-
-` +
-      `Horário funcionamento: 
-` +
-      `Horário música: 
-` +
-      `Horário reservas: 
-` +
-      `Limite de reservas: 
-` +
-      `Mensagem especial: `
+      `📅 Briefing para ${formatDateBR(dataISO)}${msgAtual}\n\n` +
+      `Responda com texto livre descrevendo o que for diferente neste dia.\n` +
+      `Exemplo: "Aniversário do bar. Programação especial a partir das 15h. Reservas seguradas até as 17h. Limite de 15 reservas. Samba das 18h às 22h."`
     );
     return;
   }
@@ -1818,46 +1805,15 @@ async function setRegraDia(dataISO, regras) {
 }
 
 async function processarRespostaDia(dataISO, texto) {
-  const linhas = texto.split("\n").map(l => l.trim()).filter(Boolean);
-  const regras = {};
-
-  for (const linha of linhas) {
-    const lower = linha.toLowerCase();
-    const valor = linha.split(":").slice(1).join(":").trim();
-    if (!valor) continue;
-
-    if (lower.startsWith("horário funcionamento") || lower.startsWith("horario funcionamento")) {
-      regras.horario_funcionamento = valor;
-    } else if (lower.startsWith("horário música") || lower.startsWith("horario musica") || lower.startsWith("horário musica") || lower.startsWith("horario música")) {
-      regras.horario_musica = valor;
-    } else if (lower.startsWith("horário reservas") || lower.startsWith("horario reservas")) {
-      regras.horario_reservas = valor;
-    } else if (lower.startsWith("limite de reservas") || lower.startsWith("limite reservas")) {
-      regras.limite_reservas = valor;
-    } else if (lower.startsWith("mensagem especial") || lower.startsWith("mensagem diferente")) {
-      regras.mensagem_especial = valor;
-    }
-  }
-
-  if (Object.keys(regras).length === 0) {
-    await notifyOwner(`⚠️ Nenhuma regra reconhecida. Use o formato:
-Horário funcionamento: 11h às 23h
-Limite de reservas: 5`);
+  const briefing = texto.trim();
+  if (!briefing) {
+    await notifyOwner(`⚠️ Briefing vazio. Escreva as informações do dia livremente.`);
     return;
   }
-
-  await setRegraDia(dataISO, regras);
-
-  const linhasConfirm = [];
-  if (regras.horario_funcionamento) linhasConfirm.push(`Horário funcionamento: ${regras.horario_funcionamento}`);
-  if (regras.horario_musica) linhasConfirm.push(`Horário música: ${regras.horario_musica}`);
-  if (regras.horario_reservas) linhasConfirm.push(`Horário reservas: ${regras.horario_reservas}`);
-  if (regras.limite_reservas) linhasConfirm.push(`Limite de reservas: ${regras.limite_reservas}`);
-  if (regras.mensagem_especial) linhasConfirm.push(`Mensagem especial: ${regras.mensagem_especial}`);
-
-  await notifyOwner(`✅ Regras especiais salvas para ${formatDateBR(dataISO)}:
-${linhasConfirm.join("\n")}`);
+  await setRegraDia(dataISO, { briefing });
+  await notifyOwner(`✅ Briefing salvo para ${formatDateBR(dataISO)}:\n\n"${briefing}"`);
 }
+
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
 
@@ -2246,8 +2202,8 @@ if (escalation) {
   const isConfirmacao = !!reservation;
   const isEscalacao = !!escalation;
 
-  const jaTemReserva = !!(await redisGet(`reserva_confirmada:${userId}`));
-  if (!isConfirmacao && !isEscalacao && !jaTemReserva && respostaContemInfoReserva(cleanReply)) {
+  const jaTemReservaFinal = !!(await redisGet(`reserva_confirmada:${userId}`));
+  if (!isConfirmacao && !isEscalacao && !jaTemReservaFinal && respostaContemInfoReserva(cleanReply)) {
     await agendarFollowUp(userId);
     console.log(`Follow-up agendado para ${userId} em 6h`);
   }
@@ -2474,9 +2430,9 @@ if (detectCancelamento(message)) {
   return; // 🔥 IMPORTANTE: para aqui
 }
 
-    // se cliente com reserva confirmada mandar mensagem de atraso, ignorar silenciosamente
-    if (await redisGet(`reserva_confirmada:${senderId}`) && detectAtraso(message)) {
-      console.log(`Mensagem de atraso ignorada de ${senderId}`);
+    // mensagens de atraso/chegada: ignorar sempre, você responde pessoalmente
+    if (detectAtraso(message)) {
+      console.log(`Mensagem de atraso/chegada ignorada de ${senderId}`);
       return;
     }
 

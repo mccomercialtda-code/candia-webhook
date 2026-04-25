@@ -864,19 +864,10 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
     ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
     : "";
 
-const programacaoInfo = programacao && programacao.length > 0 ? (() => {
-  console.log("🎤 Programação recebida:", JSON.stringify(programacao, null, 2));
-
-  const linhas = programacao.map((p, i) => {
-    const props = p.properties || {};
-
-    const artista =
-      props?.Artista?.title?.[0]?.plain_text ||
-      props?.Artista?.title?.[0]?.text?.content ||
-      "A confirmar";
-
-    const horarioProp = props?.Horario;
-
+  const programacaoInfo = programacao
+  ? `\nPROGRAMAÇÃO DO DIA\nUse obrigatoriamente estes dados ao responder sobre programação, artista, horário ou estilo. Nunca diga que não tem a programação se este bloco existir.\n${programacao}\n`
+  : "";
+  
     const horario = (
       horarioProp?.select?.name ||
       horarioProp?.rich_text?.[0]?.plain_text ||

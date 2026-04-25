@@ -366,6 +366,8 @@ async function buscarReservasPorData(dataISO) {
 
 async function buscarProgramacaoPorData(dataISO) {
   try {
+    console.log(`🔎 Buscando programação para: ${dataISO}`);
+
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_PROGRAMACAO_DB_ID}/query`, {
       method: "POST",
       headers: {
@@ -374,14 +376,35 @@ async function buscarProgramacaoPorData(dataISO) {
         "Notion-Version": "2022-06-28"
       },
       body: JSON.stringify({
-        filter: { property: "Data", date: { equals: dataISO } },
+        filter: {
+          property: "Data",
+          date: { equals: dataISO }
+        },
         sorts: [{ property: "Horario", direction: "ascending" }]
       })
     });
+
     const data = await res.json();
+
+    console.log("📦 Resposta bruta do Notion:", JSON.stringify(data, null, 2));
+
+    if (!res.ok) {
+      console.error("❌ Erro na API do Notion:", data);
+      return [];
+    }
+
+    console.log(`🎶 Total de resultados: ${data.results?.length || 0}`);
+
+    // DEBUG EXTRA: ver datas retornadas
+    data.results?.forEach((item, i) => {
+      const dataNotion = item.properties?.Data?.date?.start;
+      console.log(`➡️ Item ${i + 1} data no Notion:`, dataNotion);
+    });
+
     return data.results || [];
+
   } catch (err) {
-    console.error("Erro ao buscar programação:", err);
+    console.error("🔥 Erro ao buscar programação:", err);
     return [];
   }
 }

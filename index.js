@@ -10,7 +10,6 @@ const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
-const NOTION_PROGRAMACAO_DB_ID = "34ddbe8049f980a8be44c3f937a912ec";
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
@@ -360,51 +359,6 @@ async function buscarReservasPorData(dataISO) {
     return data.results || [];
   } catch (err) {
     console.error("Erro ao buscar reservas:", err);
-    return [];
-  }
-}
-
-async function buscarProgramacaoPorData(dataISO) {
-  try {
-    console.log(`🔎 Buscando programação para: ${dataISO}`);
-
-    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_PROGRAMACAO_DB_ID}/query`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${NOTION_TOKEN}`,
-        "Content-Type": "application/json",
-        "Notion-Version": "2022-06-28"
-      },
-      body: JSON.stringify({
-        filter: {
-          property: "Data",
-          date: { equals: dataISO }
-        },
-        sorts: [{ property: "Horario", direction: "ascending" }]
-      })
-    });
-
-    const data = await res.json();
-
-    console.log("📦 Resposta bruta do Notion:", JSON.stringify(data, null, 2));
-
-    if (!res.ok) {
-      console.error("❌ Erro na API do Notion:", data);
-      return [];
-    }
-
-    console.log(`🎶 Total de resultados: ${data.results?.length || 0}`);
-
-    // DEBUG EXTRA: ver datas retornadas
-    data.results?.forEach((item, i) => {
-      const dataNotion = item.properties?.Data?.date?.start;
-      console.log(`➡️ Item ${i + 1} data no Notion:`, dataNotion);
-    });
-
-    return data.results || [];
-
-  } catch (err) {
-    console.error("🔥 Erro ao buscar programação:", err);
     return [];
   }
 }
@@ -846,7 +800,7 @@ async function processarFilaAcumulada() {
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
-function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) {
+function getSystemPrompt(disponibilidade, regrasDia = null) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -860,59 +814,22 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
     ? `\nDISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA\n${disponibilidade}\n`
     : "";
 
-  const regrasEspeciaisInfo = regrasDia?.briefing
-    ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
-    : "";
-
-  const programacaoInfo = programacao
-  ? `\nPROGRAMAÇÃO DO DIA\nUse obrigatoriamente estes dados ao responder sobre programação, artista, horário ou estilo. Nunca diga que não tem a programação se este bloco existir.\n${programacao}\n`
-  : "";
-  
-    const horario = (
-      horarioProp?.select?.name ||
-      horarioProp?.rich_text?.[0]?.plain_text ||
-      horarioProp?.rich_text?.[0]?.text?.content ||
-      horarioProp?.date?.start ||
-      ""
-    ).trim();
-
-    const estilo =
-      props?.Estilo?.rich_text?.[0]?.plain_text ||
-      props?.Estilo?.rich_text?.[0]?.text?.content ||
-      "";
-
-    const igRaw =
-      props?.Instagram?.rich_text?.[0]?.plain_text ||
-      props?.Instagram?.rich_text?.[0]?.text?.content ||
-      "";
-
-    const instagram = igRaw
-      ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`)
-      : "";
-
-    console.log(`🎶 Item ${i + 1}:`, { artista, horario, estilo, instagram });
-
-    const partes = [];
-
-    if (horario) partes.push(horario);
-    partes.push(instagram || artista);
-    if (estilo) partes.push(estilo);
-
-    return `- ${partes.join(" — ")}`;
-  });
-
-  const texto = `\nPROGRAMAÇÃO DO DIA\nUse obrigatoriamente estes dados ao responder sobre programação. Nunca diga que não tem programação se este bloco existir.\n${linhas.join("\n")}\n`;
-
-  console.log("🧾 programacaoInfo FINAL:", texto);
-
-  return texto;
-})() : "";
+  const regrasEspeciaisInfo = regrasDia ? (() => {
+    const linhas = ["\nREGRAS ESPECIAIS PARA HOJE"];
+    if (regrasDia.horario_funcionamento) linhas.push(`Horário de funcionamento hoje: ${regrasDia.horario_funcionamento}`);
+    if (regrasDia.horario_musica) linhas.push(`Horário da música hoje: ${regrasDia.horario_musica}`);
+    if (regrasDia.horario_reservas) linhas.push(`Reservas seguradas até: ${regrasDia.horario_reservas}`);
+    if (regrasDia.limite_reservas) linhas.push(`Limite de reservas hoje: ${regrasDia.limite_reservas}`);
+    if (regrasDia.mensagem_especial) linhas.push(`Mensagem especial para este dia: ${regrasDia.mensagem_especial}`);
+    linhas.push("Use estas informações ao invés das regras padrão para hoje.\n");
+    return linhas.join("\n");
+  })() : "";
 
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-${dispInfo}${regrasEspeciaisInfo}${programacaoInfo}
+${dispInfo}${regrasEspeciaisInfo}
 
 IDENTIDADE E TOM
 
@@ -939,7 +856,6 @@ REGRA GERAL
 * Nunca sugerir nada que o cliente não pediu
 * Respostas curtas e naturais
 * Soar humano, não institucional
-* Nunca mencionar o dia da semana ao responder sobre datas — se o cliente perguntar sobre o dia 30/04, não dizer "dia 30 é quinta-feira". Responder direto ao assunto
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -989,11 +905,7 @@ FUNCIONAMENTO
 MÚSICA AO VIVO
 
 * Sexta, sábado e domingo: samba
-* Se houver programação consultada abaixo (PROGRAMAÇÃO DO DIA), use essas informações para responder sobre quem toca, horário e estilo
-*Se existir PROGRAMAÇÃO DO DIA no prompt, nunca diga que não tem a programação.
-*Mesmo que algum artista esteja como “A confirmar”, informe os horários disponíveis e diga “atração a confirmar” naquele horário.
-* Se não houver programação consultada, direcionar para os destaques do @ocandiabar no Instagram, tópico "agenda"
-* Nunca inventar nomes de artistas ou horários que não estejam na programação consultada
+* Programação: direcionar para Instagram
 
 COUVERT
 
@@ -1177,8 +1089,6 @@ function detectAtraso(text) {
     t.includes("chamei o uber") ||
     t.includes("peguei o uber") ||
     t.includes("no uber") ||
-    t.includes("meu uber") ||
-    t.includes("uber atrasou") ||
     t.includes("trânsito") ||
     t.includes("transito") ||
     t.includes("engarrafamento") ||
@@ -1194,16 +1104,7 @@ function detectAtraso(text) {
     t.includes("chego às") ||
     t.includes("chego as ") ||
     t.includes("chegando em") ||
-    t.includes("chegando logo") ||
-    t.includes("vou chegar às") ||
-    t.includes("vou chegar as ") ||
-    t.includes("podem segurar") ||
-    t.includes("pode segurar") ||
-    t.includes("segura minha mesa") ||
-    t.includes("segura a mesa") ||
-    t.includes("atrasei") ||
-    t.includes("atrasada") ||
-    t.includes("atrasado")
+    t.includes("chegando logo")
   );
 }
 
@@ -1684,15 +1585,33 @@ if (cmd.startsWith("/liberar ")) {
     // verifica se já tem regras salvas
     const regraAtual = await getRegraDia(dataISO);
     let msgAtual = "";
-    if (regraAtual?.briefing) {
-      msgAtual = `\n\n⚙️ Briefing atual:\n"${regraAtual.briefing}"`;
+    if (regraAtual) {
+      const linhas = [];
+      if (regraAtual.horario_funcionamento) linhas.push(`Horário funcionamento: ${regraAtual.horario_funcionamento}`);
+      if (regraAtual.horario_musica) linhas.push(`Horário música: ${regraAtual.horario_musica}`);
+      if (regraAtual.horario_reservas) linhas.push(`Horário reservas: ${regraAtual.horario_reservas}`);
+      if (regraAtual.limite_reservas) linhas.push(`Limite de reservas: ${regraAtual.limite_reservas}`);
+      if (regraAtual.mensagem_especial) linhas.push(`Mensagem especial: ${regraAtual.mensagem_especial}`);
+      msgAtual = "\n\n⚙️ Regras atuais:\n" + linhas.join("\n");
     }
 
     await redisSet("telegram:aguardando_dia", dataISO, 300);
     await notifyOwner(
-      `📅 Briefing para ${formatDateBR(dataISO)}${msgAtual}\n\n` +
-      `Responda com texto livre descrevendo o que for diferente neste dia.\n` +
-      `Exemplo: "Aniversário do bar. Programação especial a partir das 15h. Reservas seguradas até as 17h. Limite de 15 reservas. Samba das 18h às 22h."`
+      `📅 Configuração especial para ${formatDateBR(dataISO)}${msgAtual}
+
+` +
+      `Responda preenchendo o que quiser alterar (deixe em branco o que não mudar):
+
+` +
+      `Horário funcionamento: 
+` +
+      `Horário música: 
+` +
+      `Horário reservas: 
+` +
+      `Limite de reservas: 
+` +
+      `Mensagem especial: `
     );
     return;
   }
@@ -1899,15 +1818,46 @@ async function setRegraDia(dataISO, regras) {
 }
 
 async function processarRespostaDia(dataISO, texto) {
-  const briefing = texto.trim();
-  if (!briefing) {
-    await notifyOwner(`⚠️ Briefing vazio. Escreva as informações do dia livremente.`);
+  const linhas = texto.split("\n").map(l => l.trim()).filter(Boolean);
+  const regras = {};
+
+  for (const linha of linhas) {
+    const lower = linha.toLowerCase();
+    const valor = linha.split(":").slice(1).join(":").trim();
+    if (!valor) continue;
+
+    if (lower.startsWith("horário funcionamento") || lower.startsWith("horario funcionamento")) {
+      regras.horario_funcionamento = valor;
+    } else if (lower.startsWith("horário música") || lower.startsWith("horario musica") || lower.startsWith("horário musica") || lower.startsWith("horario música")) {
+      regras.horario_musica = valor;
+    } else if (lower.startsWith("horário reservas") || lower.startsWith("horario reservas")) {
+      regras.horario_reservas = valor;
+    } else if (lower.startsWith("limite de reservas") || lower.startsWith("limite reservas")) {
+      regras.limite_reservas = valor;
+    } else if (lower.startsWith("mensagem especial") || lower.startsWith("mensagem diferente")) {
+      regras.mensagem_especial = valor;
+    }
+  }
+
+  if (Object.keys(regras).length === 0) {
+    await notifyOwner(`⚠️ Nenhuma regra reconhecida. Use o formato:
+Horário funcionamento: 11h às 23h
+Limite de reservas: 5`);
     return;
   }
-  await setRegraDia(dataISO, { briefing });
-  await notifyOwner(`✅ Briefing salvo para ${formatDateBR(dataISO)}:\n\n"${briefing}"`);
-}
 
+  await setRegraDia(dataISO, regras);
+
+  const linhasConfirm = [];
+  if (regras.horario_funcionamento) linhasConfirm.push(`Horário funcionamento: ${regras.horario_funcionamento}`);
+  if (regras.horario_musica) linhasConfirm.push(`Horário música: ${regras.horario_musica}`);
+  if (regras.horario_reservas) linhasConfirm.push(`Horário reservas: ${regras.horario_reservas}`);
+  if (regras.limite_reservas) linhasConfirm.push(`Limite de reservas: ${regras.limite_reservas}`);
+  if (regras.mensagem_especial) linhasConfirm.push(`Mensagem especial: ${regras.mensagem_especial}`);
+
+  await notifyOwner(`✅ Regras especiais salvas para ${formatDateBR(dataISO)}:
+${linhasConfirm.join("\n")}`);
+}
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
 
@@ -2014,35 +1964,23 @@ const querAlterarReserva =
   textoLower.includes("mais pessoas") ||
   textoLower.includes("menos pessoas");
 
-  // só consulta disponibilidade se a mensagem tiver contexto de reserva
-  const textoTemContextoReserva =
-    textoLower.includes("reserva") ||
-    textoLower.includes("mesa") ||
-    textoLower.includes("reservar") ||
-    textoLower.includes("lugar") ||
-    textoLower.includes("lugares") ||
-    textoLower.includes("aniversário") ||
-    textoLower.includes("aniversario") ||
-    textoLower.includes("tem vaga") ||
-    textoLower.includes("disponib") ||
-    querAlterarReserva;
+let disponibilidadeInfo = "";
 
-  let disponibilidadeInfo = "";
-  if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
-    for (const data of explicitDates) {
-      const disp = await verificarDisponibilidade(data);
-      console.log(`Disponibilidade para ${data}:`, disp);
-      if (disp.tipo === "esgotado") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
-      } else if (disp.tipo === "descoberto") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
-      } else if (disp.tipo === "coberto") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
-      } else {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
+if (!jaTemReserva || querAlterarReserva) {
+  for (const data of explicitDates) {
+    const disp = await verificarDisponibilidade(data);
+    console.log(`Disponibilidade para ${data}:`, disp);
+    if (disp.tipo === "esgotado") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
+    } else if (disp.tipo === "descoberto") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
+    } else if (disp.tipo === "coberto") {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
+    } else {
+      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
       }
-    }
   }
+}
 
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);
@@ -2066,41 +2004,9 @@ const regrasDiaConsulta = dataISOConsulta
   ? await getRegraDia(dataISOConsulta)
   : null;
 
-// busca programação musical para datas mencionadas
-let programacaoConsulta = [];
-if (dataPrincipal) {
-  programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
-}
-
-let programacaoInfo = "";
-
-console.log("🎤 programacaoConsulta:", JSON.stringify(programacaoConsulta, null, 2));
-
-if (programacaoConsulta && programacaoConsulta.length > 0) {
-  programacaoInfo = `\n🎶 PROGRAMAÇÃO DO DIA ${dataPrincipal}:\n`;
-
-  programacaoConsulta.forEach((item, i) => {
-    const props = item.properties;
-
-    const artista = props?.Artista?.title?.[0]?.plain_text || "A confirmar";
-    const estilo = props?.Estilo?.rich_text?.[0]?.plain_text || "";
-
-    const horario = (
-      props?.Horario?.select?.name ||
-      props?.Horario?.rich_text?.[0]?.plain_text ||
-      ""
-    ).trim();
-
-    programacaoInfo += `- ${horario || "Horário a definir"} — ${artista}${estilo ? ` (${estilo})` : ""}\n`;
-  });
-}
-
-console.log("🧾 programacaoInfo FINAL:", programacaoInfo);
-  
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
-  regrasDiaConsulta,
-  programacaoInfo || null
+  regrasDiaConsulta
 );
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
@@ -2568,9 +2474,9 @@ if (detectCancelamento(message)) {
   return; // 🔥 IMPORTANTE: para aqui
 }
 
-    // mensagens de atraso/chegada: ignorar sempre, você responde pessoalmente
-    if (detectAtraso(message)) {
-      console.log(`Mensagem de atraso/chegada ignorada de ${senderId}`);
+    // se cliente com reserva confirmada mandar mensagem de atraso, ignorar silenciosamente
+    if (await redisGet(`reserva_confirmada:${senderId}`) && detectAtraso(message)) {
+      console.log(`Mensagem de atraso ignorada de ${senderId}`);
       return;
     }
 

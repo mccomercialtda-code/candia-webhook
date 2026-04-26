@@ -1008,6 +1008,19 @@ FLUXO DE RESERVA
 5. Pedir dados
 6. Confirmar
 
+FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
+Quando confirmar uma reserva, incluir SEMPRE ao final da resposta o bloco abaixo com exatamente estes campos:
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME COMPLETO, contato=TELEFONE, lugares=NUMERO, total_esperado=NUMERO, observacao=TEXTO]
+
+Regras:
+- "aniversariante" = nome completo do cliente (obrigatório)
+- "lugares" = número de lugares na mesa (8 para sábado, conforme o dia)
+- "total_esperado" = total de pessoas previstas no grupo
+- "contato" = telefone sem formatação especial
+- "observacao" = preferências, observações, área etc (pode ser vazio)
+- Nunca usar outros campos como "pessoas=", "beneficio=", "grupo=" — apenas os listados acima
+- Se algum campo obrigatório não foi informado pelo cliente, NÃO gere o bloco — peça o dado que falta
+
 * Nunca pular etapas
 * Nunca misturar passos
 
@@ -1160,6 +1173,11 @@ function extractReservation(text) {
       if (k && v) obj[k] = v;
     }
   });
+  // mapear aliases que o Claude às vezes usa
+  if (!obj.aniversariante && obj.nome) obj.aniversariante = obj.nome;
+  if (!obj.total_esperado && obj.pessoas) obj.total_esperado = obj.pessoas;
+  if (!obj.total_esperado && obj.total) obj.total_esperado = obj.total;
+  if (!obj.lugares && obj.total_esperado) obj.lugares = "8"; // fallback para sábado
   return obj;
 }
 

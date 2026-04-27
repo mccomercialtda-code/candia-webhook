@@ -10,6 +10,7 @@ const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
 const NOTION_DB_ID = process.env.NOTION_DB_ID;
+const NOTION_PROGRAMACAO_DB_ID = "34ddbe8049f980a8be44c3f937a912ec";
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const IG_ACCOUNT_ID = "17841401897917144";
@@ -360,6 +361,48 @@ async function buscarReservasPorData(dataISO) {
   } catch (err) {
     console.error("Erro ao buscar reservas:", err);
     return [];
+  }
+}
+
+async function buscarProgramacaoPorData(dataISO) {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_PROGRAMACAO_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: { property: "Data", date: { equals: dataISO } }
+      })
+    });
+    const data = await res.json();
+    const results = data.results || [];
+    if (results.length > 0) {
+      const linhas = results.map(p => {
+        const artista = p.properties?.Artista?.title?.[0]?.plain_text || "A confirmar";
+        const horarioProp = p.properties?.Horario;
+        const horario = (
+          horarioProp?.rich_text?.[0]?.plain_text ||
+          horarioProp?.date?.start ||
+          ""
+        ).trim();
+        const estilo = (p.properties?.Estilo?.rich_text?.[0]?.plain_text || "").trim();
+        const igRaw = (p.properties?.Instagram?.rich_text?.[0]?.plain_text || "").trim();
+        const instagram = igRaw ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`) : "";
+        const partes = [];
+        if (horario) partes.push(horario);
+        partes.push(instagram || artista);
+        if (estilo) partes.push(estilo);
+        return `- ${partes.join(" — ")}`;
+      });
+      return linhas.join("\n");
+    }
+    return null;
+  } catch (err) {
+    console.error("Erro ao buscar programação:", err);
+    return null;
   }
 }
 
@@ -800,7 +843,7 @@ async function processarFilaAcumulada() {
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
-function getSystemPrompt(disponibilidade, regrasDia = null) {
+function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -825,11 +868,15 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
     return linhas.join("\n");
   })() : "";
 
+  const programacaoInfo = programacao
+    ? `\nPROGRAMAÇÃO DO DIA\nUse exatamente estes dados ao responder sobre quem toca, horário e estilo. Nunca diga que não tem programação se este bloco existir:\n${programacao}\n`
+    : "";
+
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-${dispInfo}${regrasEspeciaisInfo}
+${dispInfo}${regrasEspeciaisInfo}${programacaoInfo}
 
 IDENTIDADE E TOM
 
@@ -856,6 +903,7 @@ REGRA GERAL
 * Nunca sugerir nada que o cliente não pediu
 * Respostas curtas e naturais
 * Soar humano, não institucional
+* Nunca mencionar o dia da semana ao responder sobre datas
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -904,8 +952,13 @@ FUNCIONAMENTO
 
 MÚSICA AO VIVO
 
-* Sexta, sábado e domingo: samba
-* Programação: direcionar para Instagram
+* Tem música ao vivo TODOS os dias que o bar funciona (terça a domingo)
+* Sexta a domingo: samba
+* Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
+* NUNCA dizer que não tem música ao vivo em dia de funcionamento
+* Se houver PROGRAMAÇÃO DO DIA no prompt, use exatamente esses dados para responder sobre quem toca, horário e estilo
+* Se não houver programação consultada para aquela data, dizer que a programação completa está nos destaques do @ocandiabar no Instagram, tópico "agenda"
+* Nunca inventar nomes de artistas ou horários
 
 COUVERT
 
@@ -991,13 +1044,14 @@ REGRAS IMPORTANTES:
 SÁBADO (OBRIGATÓRIO)
 
 1. Confirmar data e pessoas
-2. Explicar formato
+2. Explicar formato — sempre incluir que a mesa é segurada até as 15h com tolerância de 15 minutos
 3. Perguntar se pode seguir
 
-* Mesa até 8 lugares
+* Mesa até 8 lugares, segurada até as 15h (tolerância de 15 minutinhos)
 * Restante fica em volta curtindo o samba
 * Sempre vender como experiência positiva
 * Nunca falar área interna
+* Ao apresentar o formato do sábado, sempre mencionar: "a mesa fica segurada até as 15h, com tolerância de 15 minutinhos"
 
 FLUXO DE RESERVA
 
@@ -1008,21 +1062,18 @@ FLUXO DE RESERVA
 5. Pedir dados
 6. Confirmar
 
-FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
-Quando confirmar uma reserva, incluir SEMPRE ao final da resposta o bloco abaixo com exatamente estes campos:
-[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME COMPLETO, contato=TELEFONE, lugares=NUMERO, total_esperado=NUMERO, observacao=TEXTO]
-
-Regras:
-- "aniversariante" = nome completo do cliente (obrigatório)
-- "lugares" = número de lugares na mesa (8 para sábado, conforme o dia)
-- "total_esperado" = total de pessoas previstas no grupo
-- "contato" = telefone sem formatação especial
-- "observacao" = preferências, observações, área etc (pode ser vazio)
-- Nunca usar outros campos como "pessoas=", "beneficio=", "grupo=" — apenas os listados acima
-- Se algum campo obrigatório não foi informado pelo cliente, NÃO gere o bloco — peça o dado que falta
-
 * Nunca pular etapas
 * Nunca misturar passos
+
+FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
+Quando confirmar uma reserva, incluir SEMPRE ao final da resposta:
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME COMPLETO, contato=TELEFONE, lugares=NUMERO, total_esperado=NUMERO, observacao=TEXTO]
+
+- "aniversariante" = nome completo (obrigatório)
+- "lugares" = lugares na mesa (8 para sábado)
+- "total_esperado" = total de pessoas do grupo
+- Nunca usar outros campos como "pessoas=", "beneficio=", "grupo="
+- Se faltar campo obrigatório, peça o dado — não gere o bloco incompleto
 
 MÚSICOS
 Se alguém quiser tocar:
@@ -1117,7 +1168,18 @@ function detectAtraso(text) {
     t.includes("chego às") ||
     t.includes("chego as ") ||
     t.includes("chegando em") ||
-    t.includes("chegando logo")
+    t.includes("chegando logo") ||
+    t.includes("meu uber") ||
+    t.includes("uber atrasou") ||
+    t.includes("vou chegar às") ||
+    t.includes("vou chegar as ") ||
+    t.includes("podem segurar") ||
+    t.includes("pode segurar") ||
+    t.includes("segura minha mesa") ||
+    t.includes("segura a mesa") ||
+    t.includes("atrasei") ||
+    t.includes("atrasada") ||
+    t.includes("atrasado")
   );
 }
 
@@ -1177,7 +1239,7 @@ function extractReservation(text) {
   if (!obj.aniversariante && obj.nome) obj.aniversariante = obj.nome;
   if (!obj.total_esperado && obj.pessoas) obj.total_esperado = obj.pessoas;
   if (!obj.total_esperado && obj.total) obj.total_esperado = obj.total;
-  if (!obj.lugares && obj.total_esperado) obj.lugares = "8"; // fallback para sábado
+  if (!obj.lugares && obj.total_esperado) obj.lugares = "8";
   return obj;
 }
 
@@ -1982,23 +2044,35 @@ const querAlterarReserva =
   textoLower.includes("mais pessoas") ||
   textoLower.includes("menos pessoas");
 
-let disponibilidadeInfo = "";
+  // só consulta disponibilidade se a mensagem tiver contexto de reserva
+  const textoTemContextoReserva =
+    textoLower.includes("reserva") ||
+    textoLower.includes("mesa") ||
+    textoLower.includes("reservar") ||
+    textoLower.includes("lugar") ||
+    textoLower.includes("lugares") ||
+    textoLower.includes("aniversário") ||
+    textoLower.includes("aniversario") ||
+    textoLower.includes("tem vaga") ||
+    textoLower.includes("disponib") ||
+    querAlterarReserva;
 
-if (!jaTemReserva || querAlterarReserva) {
-  for (const data of explicitDates) {
-    const disp = await verificarDisponibilidade(data);
-    console.log(`Disponibilidade para ${data}:`, disp);
-    if (disp.tipo === "esgotado") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
-    } else if (disp.tipo === "descoberto") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
-    } else if (disp.tipo === "coberto") {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
-    } else {
-      disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
+  let disponibilidadeInfo = "";
+  if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
+    for (const data of explicitDates) {
+      const disp = await verificarDisponibilidade(data);
+      console.log(`Disponibilidade para ${data}:`, disp);
+      if (disp.tipo === "esgotado") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
+      } else if (disp.tipo === "descoberto") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
+      } else if (disp.tipo === "coberto") {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
+      } else {
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
       }
+    }
   }
-}
 
   history.push({ role: "user", content: combinedMessage });
   if (history.length > 20) history.splice(0, 2);
@@ -2022,9 +2096,17 @@ const regrasDiaConsulta = dataISOConsulta
   ? await getRegraDia(dataISOConsulta)
   : null;
 
+// busca programação musical sempre que houver data mencionada
+let programacaoConsulta = null;
+if (dataPrincipal) {
+  programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
+  console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? "encontrada" : "não encontrada"}`);
+}
+
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
-  regrasDiaConsulta
+  regrasDiaConsulta,
+  programacaoConsulta
 );
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
@@ -2492,9 +2574,9 @@ if (detectCancelamento(message)) {
   return; // 🔥 IMPORTANTE: para aqui
 }
 
-    // se cliente com reserva confirmada mandar mensagem de atraso, ignorar silenciosamente
-    if (await redisGet(`reserva_confirmada:${senderId}`) && detectAtraso(message)) {
-      console.log(`Mensagem de atraso ignorada de ${senderId}`);
+    // mensagens de atraso/chegada: ignorar sempre, você responde pessoalmente
+    if (detectAtraso(message)) {
+      console.log(`Mensagem de atraso/chegada ignorada de ${senderId}`);
       return;
     }
 

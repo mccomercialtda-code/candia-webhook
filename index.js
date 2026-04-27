@@ -897,6 +897,7 @@ REGRA GERAL
 * Respostas curtas e naturais
 * Soar humano, não institucional
 * Nunca mencionar o dia da semana ao responder sobre datas
+* Nunca usar separadores como "---", "***" ou similares nas mensagens
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -950,6 +951,7 @@ MÚSICA AO VIVO
 * Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
 * Se houver PROGRAMAÇÃO DO DIA no prompt, use exatamente esses dados para responder sobre quem toca, horário e estilo
+* Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ que está na programação — nunca redirecione para o @ocandiabar nesse caso
 * Se não houver programação consultada para aquela data, dizer que a programação completa está nos destaques do @ocandiabar no Instagram, tópico "agenda"
 * Nunca inventar nomes de artistas ou horários
 
@@ -2029,9 +2031,14 @@ const querAlterarReserva =
   // busca regras especiais do dia atual
 function getPrimaryDate(explicitDates) {
   if (!explicitDates || explicitDates.length === 0) return null;
-  return explicitDates[0];
+  // prefere a data mais próxima no futuro em vez do primeiro resultado
+  const hoje = new Date();
+  const futuras = explicitDates
+    .map(d => { const [dia,mes,ano] = d.split("/"); return { d, dt: new Date(`${ano}-${mes}-${dia}`) }; })
+    .filter(x => x.dt >= hoje)
+    .sort((a,b) => a.dt - b.dt);
+  return futuras.length > 0 ? futuras[0].d : explicitDates[0];
 }
-
 const dataPrincipal = getPrimaryDate(explicitDates);
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 

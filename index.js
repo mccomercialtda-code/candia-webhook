@@ -861,8 +861,8 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
     ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
     : "";
 
-  const programacaoInfo = programacao
-    ? `\nPROGRAMAÇÃO DO DIA\nUse exatamente estes dados ao responder sobre quem toca, horário e estilo. Nunca diga que não tem programação se este bloco existir:\n${programacao}\n`
+ const programacaoInfo = programacao
+    ? `\nATENÇÃO — PROGRAMAÇÃO CONFIRMADA PARA ESTA DATA:\n${programacao}\nEsta informação é OBRIGATÓRIA. Você DEVE usar estes dados ao responder sobre programação, artistas, horários ou Instagram. É PROIBIDO dizer que não tem programação ou redirecionar para o Instagram quando este bloco existir.\n`
     : "";
 
   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.

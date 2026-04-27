@@ -2046,9 +2046,12 @@ const querAlterarReserva =
   }
 
   // busca regras especiais do dia atual
-function getPrimaryDate(explicitDates) {
+function getPrimaryDate(explicitDates, currentMessage) {
   if (!explicitDates || explicitDates.length === 0) return null;
-  // prefere a data mais próxima no futuro em vez do primeiro resultado
+  // prioriza datas da mensagem atual
+  const datesInCurrent = extractExplicitDates(currentMessage);
+  if (datesInCurrent.length > 0) return datesInCurrent[0];
+  // fallback: mais próxima no futuro do histórico
   const hoje = new Date();
   const futuras = explicitDates
     .map(d => { const [dia,mes,ano] = d.split("/"); return { d, dt: new Date(`${ano}-${mes}-${dia}`) }; })
@@ -2056,7 +2059,7 @@ function getPrimaryDate(explicitDates) {
     .sort((a,b) => a.dt - b.dt);
   return futuras.length > 0 ? futuras[0].d : explicitDates[0];
 }
-const dataPrincipal = getPrimaryDate(explicitDates);
+const dataPrincipal = getPrimaryDate(explicitDates, combinedMessage);
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 const regrasDiaConsulta = dataISOConsulta

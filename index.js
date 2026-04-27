@@ -843,7 +843,7 @@ async function processarFilaAcumulada() {
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
-function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) {
+function getSystemPrompt(disponibilidade, regrasDia = null) {
   const now = new Date();
   const dataHoje = now.toLocaleDateString("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -861,15 +861,11 @@ function getSystemPrompt(disponibilidade, regrasDia = null, programacao = null) 
     ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
     : "";
 
- const programacaoInfo = programacao
-    ? `\nATENÇÃO — PROGRAMAÇÃO CONFIRMADA PARA ESTA DATA:\n${programacao}\nEsta informação é OBRIGATÓRIA. Você DEVE usar estes dados ao responder sobre programação, artistas, horários ou Instagram. É PROIBIDO dizer que não tem programação ou redirecionar para o Instagram quando este bloco existir.\n`
-    : "";
-
-  return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
+   return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
-${dispInfo}${regrasEspeciaisInfo}${programacaoInfo}
+${dispInfo}${regrasEspeciaisInfo}
 
 IDENTIDADE E TOM
 
@@ -2076,9 +2072,19 @@ if (dataPrincipal) {
 
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
-  regrasDiaConsulta,
-  programacaoConsulta
+  regrasDiaConsulta
 );
+
+if (regrasDiaConsulta?.briefing || programacaoConsulta) {
+  systemPrompt += `\n\nATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA:\n`;
+  if (regrasDiaConsulta?.briefing) {
+    systemPrompt += `BRIEFING DO DIA: ${regrasDiaConsulta.briefing}\n`;
+  }
+  if (programacaoConsulta) {
+    systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta}\n`;
+  }
+  systemPrompt += `Você DEVE usar estas informações ao responder. É ABSOLUTAMENTE PROIBIDO ignorar estes dados, dizer que não tem programação ou redirecionar para o Instagram quando este bloco existir.\n`;
+}
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
   if (contatoDetectado) {

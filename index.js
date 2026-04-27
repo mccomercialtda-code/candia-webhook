@@ -2050,6 +2050,7 @@ const regrasDiaConsulta = dataISOConsulta
 let programacaoConsulta = null;
 if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
+  console.log(`Programação conteúdo:`, programacaoConsulta);
   console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? "encontrada" : "não encontrada"}`);
 }
 

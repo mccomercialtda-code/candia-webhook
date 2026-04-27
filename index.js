@@ -388,6 +388,7 @@ async function buscarProgramacaoPorData(dataISO) {
           horarioProp?.date?.start ||
           ""
         ).trim();
+        console.log(`Horario raw:`, JSON.stringify(horarioProp));
         const estilo = (p.properties?.Estilo?.rich_text?.[0]?.plain_text || "").trim();
         const igRaw = (p.properties?.Instagram?.rich_text?.[0]?.plain_text || "").trim();
         const instagram = igRaw ? (igRaw.startsWith("@") ? igRaw : `@${igRaw}`) : "";
@@ -959,11 +960,20 @@ COUVERT
 * Sexta a domingo: R$10
 * Só mencionar se perguntarem
 
+
 ENTRADA / COUVERT
 
 * Entrada e couvert são a mesma coisa
 * Sempre dizer que há couvert
 * Nunca dizer “não tem entrada”
+
+FORMA DE PAGAMENTO / COMANDA
+
+* Terça a quinta: comanda individual
+* Sexta a domingo: pagamento antecipado via fichas — cada um paga o seu, não precisa dividir conta
+* Se perguntarem sobre comanda ou forma de pagamento, responder:
+  "De sexta a domingo trabalhamos com pagamento antecipado, via fichas. Aí não precisa se preocupar em dividir a conta, cada um paga o seu 😜"
+* Só mencionar se perguntarem
 
 PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENFÍCIO ANIVERSARIANTE
 

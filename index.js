@@ -858,9 +858,7 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
     ? `\nDISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA\n${disponibilidade}\n`
     : "";
 
-  const regrasEspeciaisInfo = regrasDia?.briefing
-    ? `\nINFORMAÇÕES ESPECIAIS PARA A DATA CONSULTADA\n${regrasDia.briefing}\nUse estas informações ao responder perguntas sobre este dia. Elas têm prioridade sobre as regras padrão.\n`
-    : "";
+ const regrasEspeciaisInfo = "";
 
    return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 

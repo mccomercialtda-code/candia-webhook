@@ -959,6 +959,7 @@ COUVERT
 * Terça a quinta: R$12
 * Sexta a domingo: R$10
 * Só mencionar se perguntarem
+* ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor — R$12 para terça/quarta/quinta e R$10 para sexta/sábado/domingo
 
 
 ENTRADA / COUVERT
@@ -2096,7 +2097,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
   if (programacaoConsulta) {
     systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta}\n`;
   }
-  systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação.\n`;
+  systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação. Se em mensagens anteriores você disse que não tinha a programação, IGNORE — agora você TEM os dados e DEVE usá-los.\n`;
 }
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);

@@ -1025,6 +1025,7 @@ RESERVAS
 BOLO / TORTA / DOCE
 
 Se o cliente perguntar se pode levar bolo, torta ou doce:
+* Ao responder sobre bolo/torta/doce, usar OBRIGATORIAMENTE o texto completo abaixo, sem omitir nenhuma parte:
 "Pode trazer sim 😉 Só não conseguimos garantir espaço na geladeira — guardamos por ordem de chegada. Se quando você chegar não houver espaço, você pode deixar na sua mesa mesmo. 😉 Só um detalhe: pratinhos e talheres a gente não tem, só guardanapos - então vale trazer o de vocês!."
 
 Se o cliente pedir para:

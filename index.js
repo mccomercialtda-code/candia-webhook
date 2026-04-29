@@ -18,8 +18,15 @@ const DEBOUNCE_MS = 90000; // 1.5 min
 const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
-const BOT_HORA_INICIO = 8;
-const BOT_HORA_FIM = 23;
+const HORARIOS_ATENDIMENTO = {
+  1: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // segunda
+  2: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // terça
+  3: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // quarta
+  4: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // quinta
+  5: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // sexta
+  6: [{ inicio: 10, fim: 14 }, { inicio: 17, fim: 22 }], // sábado
+  0: [{ inicio: 9, fim: 13 }, { inicio: 16, fim: 18 }],  // domingo
+};
 
 const LIMITES = {
   "sexta":   { coberto: 10, descoberto: 0,  total: 10 },
@@ -145,8 +152,12 @@ async function enableForceOutsideHours(seconds = 3600) {
 
 async function isHorarioComercial() {
   if (await isForceOutsideHoursEnabled()) return true;
-  const hora = getHoraBrasilia();
-  return hora >= BOT_HORA_INICIO && hora < BOT_HORA_FIM;
+  const now = new Date();
+  const brt = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  const hora = brt.getHours();
+  const diaSemana = brt.getDay();
+  const faixas = HORARIOS_ATENDIMENTO[diaSemana] || [];
+  return faixas.some(f => hora >= f.inicio && hora < f.fim);
 }
 
 // ─── Overrides manuais ────────────────────────────────────────────────────────
@@ -1021,6 +1032,9 @@ RESERVAS
   - Sexta: até 12 lugares sentados por reserva
 * Só mencionar o limite de lugares depois que a data estiver definida
 * Nunca dizer que não pode vir por causa do tamanho do grupo
+* Se alguém pedir reserva para outras pessoas do grupo, informar que cada pessoa precisa entrar em contato separadamente para fazer sua própria reserva
+* NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
+* Uma reserva por atendimento — nunca oferecer ou confirmar múltiplas reservas na mesma conversa
 
 
 BOLO / TORTA / DOCE
@@ -1063,6 +1077,7 @@ SÁBADO (OBRIGATÓRIO)
 3. Perguntar se pode seguir
 
 * Mesa até 8 lugares, segurada até as 15h (tolerância de 15 minutinhos)
+* ATENÇÃO: estas regras são EXCLUSIVAS do sábado — nunca aplicar para outros dias da semana
 * Restante fica em volta curtindo o samba
 * Sempre vender como experiência positiva
 * Nunca falar área interna
@@ -1990,7 +2005,12 @@ if (paused) {
   await clearPendingMessages(userId);
 
   // PONTO 6: separador explícito entre mensagens acumuladas
-  const combinedMessage = pendingMessages.join(" | ");
+  const mensagensFiltradas = pendingMessages.filter(m => !detectAtraso(m));
+if (mensagensFiltradas.length === 0) {
+  console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
+  return;
+}
+const combinedMessage = mensagensFiltradas.join(" | ");
   const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
 
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
@@ -2117,7 +2137,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
 
   // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento
   if (history.length <= 1 && await redisGet(`reserva_confirmada:${userId}`)) {
-    systemPrompt += `\nEste cliente já possui uma reserva confirmada anteriormente. Atenda normalmente — não inicie novo fluxo de reserva nem trate como primeiro contato.\n`;
+    systemPrompt += `\nEste cliente já possui uma reserva confirmada anteriormente. Atenda normalmente — NÃO peça nome, telefone ou dados de reserva novamente. NÃO inicie novo fluxo de reserva. Se o cliente quiser alterar algo, apenas confirme o que ele quer mudar e anote na conversa.\n`;
   }
 
   // se histórico vazio e existe última resposta do bot, injeta como contexto mínimo

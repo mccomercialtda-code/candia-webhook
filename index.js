@@ -2127,6 +2127,38 @@ Verifique a conversa manualmente.`);
     return;
   }
 
+if (cmd.startsWith("/retomar ")) {
+  const userId = raw.split(" ")[1]?.trim();
+  if (!userId) { await notifyOwner("⚠️ Use: /retomar USER_ID"); return; }
+
+  await redisDel(`paused:${userId}`);
+  await redisDel(`humano_encerrou:${userId}`);
+  await redisDel(`humano_informou:${userId}`);
+  await redisDel(`followup:${userId}`);
+  await limparConversaEscalada(userId);
+
+  const hist = await getHistory(userId);
+  if (hist.length === 0) {
+    await notifyOwner(`⚠️ Nenhum histórico encontrado para ${userId}`);
+    return;
+  }
+
+  // pega últimas 10 mensagens para contexto e usa a última do cliente como gatilho
+  const ultimas10 = hist.slice(-10);
+  const ultimaMensagemCliente = [...ultimas10].reverse().find(h => h.role === "user");
+  if (!ultimaMensagemCliente) {
+    await notifyOwner(`⚠️ Nenhuma mensagem do cliente no histórico de ${userId}`);
+    return;
+  }
+
+  await addPendingMessage(userId, ultimaMensagemCliente.content);
+  const newToken = `${userId}_${Date.now()}`;
+  await setDebounceToken(userId, newToken);
+  processMessages(userId, newToken);
+  await notifyOwner(`▶️ Retomando conversa com ${userId}`);
+  return;
+}
+  
   if (cmd === "/help") {
     await notifyOwner(
 `📋 Comandos disponíveis:
@@ -2152,7 +2184,7 @@ Ex: /status 11/04
 
 /dia DD/MM — Configura regras especiais para uma data
 Ex: /dia 18/04
-
+/retomar USER_ID — Retoma conversa reprocessando última mensagem do cliente
 /pausar — Pausa o bot globalmente
 /reativar — Reativa o bot
 /reativar @username — Reativa pelo @ do Instagram

@@ -2151,7 +2151,7 @@ if (cmd.startsWith("/retomar ")) {
     return;
   }
 
-  await addPendingMessage(userId, ultimaMensagemCliente.content);
+await addPendingMessage(userId, ultimaMensagemCliente.content);
   const newToken = `${userId}_${Date.now()}`;
   await setDebounceToken(userId, newToken);
   processMessages(userId, newToken);

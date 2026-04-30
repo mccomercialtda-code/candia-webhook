@@ -2266,6 +2266,17 @@ const combinedMessage = mensagensFiltradas.join(" | ");
   const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
 
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
+  // CRM: garante que cliente existe no Notion
+  (async () => {
+    try {
+      const username = await redisGet(`ig_username:${userId}`);
+      await criarOuAtualizarCliente(userId, {
+        username: username || "",
+        origem: "Orgânico",
+        motivo: await detectarMotivoContato(combinedMessage)
+      });
+    } catch (e) { console.error("Erro CRM processMessages:", e); }
+  })();
 
   await cancelarFollowUp(userId);
 

@@ -2957,6 +2957,10 @@ if (detectCancelamento(message)) {
     `⚠️ Cliente quer cancelar reserva\nID: ${senderId}\n@${username || "sem_username"}`
   );
 
+  // limpa fila para evitar processamento de mensagens subsequentes
+  await clearPendingMessages(senderId);
+  await setDebounceToken(senderId, `cancelled_${Date.now()}`);
+
   // evita echo
   await redisSet(`echo_bot:${senderId}`, "1", 30);
 
@@ -2965,7 +2969,7 @@ if (detectCancelamento(message)) {
     "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!"
   );
 
-  return; // 🔥 IMPORTANTE: para aqui
+  return;
 }
 
     // mensagens de atraso/chegada: ignorar sempre, você responde pessoalmente

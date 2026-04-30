@@ -2734,6 +2734,13 @@ app.post("/", async (req, res) => {
   // CRM: marca atendido por humano + gera resumo
   (async () => {
     try {
+      const username = await redisGet(`ig_username:${recipientId}`);
+      await criarOuAtualizarCliente(recipientId, {
+        username: username || "",
+        origem: "Orgânico",
+        motivo: "Informações",
+        observacao: "Primeiro contato atendido manualmente"
+      });
       await marcarClienteAtendidoPorHumano(recipientId);
       const histAtual = await getHistory(recipientId);
       if (histAtual.length >= 3) {

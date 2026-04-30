@@ -896,7 +896,8 @@ async function buscarClienteNotion(instagramId) {
         page_size: 1
       })
     });
-    const data = await res.json();
+   const data = await res.json();
+    if (data.object === "error") console.error("Erro Notion buscar cliente:", JSON.stringify(data));
     if (data.results && data.results.length > 0) return data.results[0];
     return null;
   } catch (err) {
@@ -965,7 +966,7 @@ ${observacao}` : observacao;
       };
       if (observacao) props["Observações"] = { rich_text: [{ text: { content: observacao } }] };
 
-      await fetch("https://api.notion.com/v1/pages", {
+      const resCreate = await fetch("https://api.notion.com/v1/pages", {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${NOTION_TOKEN}`,
@@ -974,6 +975,9 @@ ${observacao}` : observacao;
         },
         body: JSON.stringify({ parent: { database_id: NOTION_CLIENTES_DB_ID }, properties: props })
       });
+      const resultado = await resCreate.json();
+      if (resultado.object === "error") console.error("Erro Notion criar cliente:", JSON.stringify(resultado));
+      else console.log("Cliente criado no Notion:", resultado.id);
     }
   } catch (err) {
     console.error("Erro ao criar/atualizar cliente no Notion:", err);

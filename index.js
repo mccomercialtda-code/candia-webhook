@@ -2942,7 +2942,7 @@ if (detectCancelamento(message)) {
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
 
     if (!(await isHorarioComercial())) {
-      console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até as ${BOT_HORA_INICIO}h`);
+      console.log(`Fora do horário comercial — mensagem de ${senderId} aguardará até o próximo horário de atendimento`);
       return;
     }
 

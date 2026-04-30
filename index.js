@@ -2379,6 +2379,19 @@ let systemPrompt = getSystemPrompt(
   regrasDiaConsulta
 );
 
+// escalação automática se briefing contém "escalar"
+if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().includes("escalar")) {
+  const usernameEsc = await redisGet(`ig_username:${userId}`);
+  await notifyOwner(`⚠️ Escalonamento automático por briefing do dia\nCliente: ${userId}${usernameEsc ? ` (@${usernameEsc})` : ""}\nBriefing: ${regrasDiaConsulta.briefing}\nUse: /reativar ${userId}`);
+  await marcarConversaEscalada(userId, "Briefing do dia requer atenção humana");
+  await clearPendingMessages(userId);
+  await setDebounceToken(userId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(userId);
+  await redisSet(`echo_bot:${userId}`, "1", 180);
+  await sendInstagramMessage(userId, "Olá! Vou te passar para um de nossos atendentes agora 😊 Em breve alguém te responde por aqui!");
+  return;
+}
+  
 if (regrasDiaConsulta?.briefing || programacaoConsulta) {
   systemPrompt += `\n\nATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA:\n`;
   if (regrasDiaConsulta?.briefing) {

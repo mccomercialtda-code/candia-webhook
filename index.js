@@ -20,12 +20,12 @@ const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
 const HORARIOS_ATENDIMENTO = {
-  1: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // segunda
-  2: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // terça
-  3: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // quarta
-  4: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // quinta
-  5: [{ inicio: 10, fim: 12 }, { inicio: 14, fim: 17 }, { inicio: 19, fim: 21 }], // sexta
-  6: [{ inicio: 10, fim: 14 }, { inicio: 17, fim: 22 }], // sábado
+  1: [{ inicio: 9, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // segunda
+  2: [{ inicio: 9, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // terça
+  3: [{ inicio: 9, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // quarta
+  4: [{ inicio: 9, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // quinta
+  5: [{ inicio: 9, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // sexta
+  6: [{ inicio: 9, fim: 14 }, { inicio: 17, fim: 22 }], // sábado
   0: [{ inicio: 9, fim: 13 }, { inicio: 16, fim: 18 }],  // domingo
 };
 

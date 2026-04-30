@@ -1243,6 +1243,7 @@ RESERVAS
 * Nunca dizer que não pode vir por causa do tamanho do grupo
 * Se alguém pedir reserva para outras pessoas do grupo, informar que cada pessoa precisa entrar em contato separadamente para fazer sua própria reserva
 * NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
+* Se o cliente pedir mesa próxima a outra reserva, responder: "Não conseguimos garantir proximidade das reservas 🥲. Montamos as reservas no dia, de acordo com número de reservas e antecedência dos pedidos, mas faremos o possível para atender seu pedido 😉"
 * Uma reserva por atendimento — nunca oferecer ou confirmar múltiplas reservas na mesma conversa
 
 
@@ -1291,6 +1292,7 @@ SÁBADO (OBRIGATÓRIO)
 * Sempre vender como experiência positiva
 * Nunca falar área interna
 * Ao apresentar o formato do sábado, sempre mencionar: "a mesa fica segurada até as 15h, com tolerância de 15 minutinhos"
+* Só mencionar o limite de 8 lugares se o grupo for maior que 8 — para grupos menores, não é necessário citar o limite
 
 FLUXO DE RESERVA
 

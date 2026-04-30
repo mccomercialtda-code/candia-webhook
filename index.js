@@ -1172,6 +1172,7 @@ MÚSICA AO VIVO
 * Só redirecionar para @ocandiabar se NÃO houver PROGRAMAÇÃO DO DIA no prompt
 * Nunca inventar nomes de artistas ou horários
 * NUNCA dizer "deixa eu checar", "vou verificar", "em breve retorno" sobre programação — se houver PROGRAMAÇÃO DO DIA no prompt, responda imediatamente com os dados
+* Se o BRIEFING DO DIA começar com "MENSAGEM EXATA:", use obrigatoriamente o texto que segue como resposta — sem alterar nenhuma palavra
 
 COUVERT
 

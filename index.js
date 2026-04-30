@@ -935,6 +935,7 @@ ${observacao}` : observacao;
         const dataHoje = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric" });
         const novoHist = histAtual ? `${histAtual} | ${dataHoje}` : dataHoje;
         props["Histórico de reservas"] = { rich_text: [{ text: { content: novoHist } }] };
+        if (nome && nome !== "—") props["Nome"] = { title: [{ text: { content: nome } }] };
       }
 
       await fetch(`https://api.notion.com/v1/pages/${clienteExistente.id}`, {
@@ -1499,6 +1500,7 @@ function extractReservation(text) {
   });
   // mapear aliases que o Claude às vezes usa
   if (!obj.aniversariante && obj.nome) obj.aniversariante = obj.nome;
+  if (obj.contato) obj.contato = obj.contato.replace(/\D/g, "");
   if (!obj.total_esperado && obj.pessoas) obj.total_esperado = obj.pessoas;
   if (!obj.total_esperado && obj.total) obj.total_esperado = obj.total;
   if (!obj.lugares && obj.total_esperado) obj.lugares = "8";

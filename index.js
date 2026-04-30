@@ -836,6 +836,17 @@ async function agendarVerificacaoHorario() {
 }
 
 async function processarFilaAcumulada() {
+  // evita processamento duplo simultâneo
+  const lockUrl = `${UPSTASH_URL}/set/${encodeURIComponent("lock:fila_acumulada")}/1?NX&EX=30`;
+  const lockRes = await fetch(lockUrl, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+  });
+  const lockData = await lockRes.json();
+  if (lockData.result !== "OK") {
+    console.log("Fila acumulada já está sendo processada — ignorando");
+    return;
+  }
   console.log("Verificando fila acumulada fora do horário...");
   try {
     const res = await fetch(`${UPSTASH_URL}/keys/pending:*`, {

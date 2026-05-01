@@ -1780,23 +1780,8 @@ async function handleTelegramCommand(text) {
   const cmd = raw.toLowerCase();
 
   // /Ex DD/MM → força área externa
-  if (raw.toLowerCase().startsWith("/ex ")) {
-    const dataISO = parseDateFromCommand(raw.slice(4).trim());
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /Ex 11/04"); return; }
-    await setOverride(dataISO, "ext");
-    await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
-    return;
-  }
-
-  // /E DD/MM → força esgotado
-  if (raw.toLowerCase().startsWith("/e ")) {
-    const dataISO = parseDateFromCommand(raw.slice(3).trim());
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /E 11/04"); return; }
-    await setOverride(dataISO, "esg");
-    await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
-    return;
-  }
-
+ 
+  
 if (cmd.startsWith("/liberar ")) {
   const userId = raw.split(" ")[1]?.trim();
   if (!userId) {
@@ -1829,30 +1814,6 @@ if (cmd.startsWith("/liberar ")) {
     return;
   }
 
-  if (cmd.startsWith("/reativar")) {
-    const parts = raw.split(" ");
-    if (parts.length > 1) {
-      let userId = parts[1].trim();
-
-      // suporte a /reativar @username
-      if (userId.startsWith("@")) {
-        const username = userId.slice(1).toLowerCase();
-        const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
-          headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-        });
-        const data = await res.json();
-        const keys = data.result || [];
-        let found = null;
-        for (const key of keys) {
-          const val = await redisGet(key);
-          if (val && val.toLowerCase() === username) {
-            found = key.replace("ig_username:", "");
-            break;
-          }
-        }
-        if (!found) {
-          await notifyOwner(`⚠️ Usuário @${username} não encontrado no cache. Use o ID numérico.`);
-          return;
         }
         userId = found;
       }
@@ -1868,10 +1829,28 @@ if (cmd.startsWith("/liberar ")) {
     return;
   }
 
-  if (cmd.startsWith("/start")) {
+ if (cmd.startsWith("/start")) {
     const parts = raw.split(" ");
     if (parts.length > 1) {
-      const userId = parts[1].trim();
+      let userId = parts[1].trim();
+      if (userId.startsWith("@")) {
+        const username = userId.slice(1).toLowerCase();
+        const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
+          headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+        });
+        const data = await res.json();
+        const keys = data.result || [];
+        let found = null;
+        for (const key of keys) {
+          const val = await redisGet(key);
+          if (val && val.toLowerCase() === username) {
+            found = key.replace("ig_username:", "");
+            break;
+          }
+        }
+        if (!found) { await notifyOwner(`⚠️ Usuário ${userId} não encontrado no cache.`); return; }
+        userId = found;
+      }
       await limparConversaEscalada(userId);
       await redisDel(`paused:${userId}`);
       await redisDel(`humano_encerrou:${userId}`);
@@ -1879,11 +1858,22 @@ if (cmd.startsWith("/liberar ")) {
       await redisDel(`followup:${userId}`);
       await redisDel(`debounce:${userId}`);
       await enableForceOutsideHours(3600);
-      const newToken = `${userId}_${Date.now()}`;
-      await setDebounceToken(userId, newToken);
-      processMessages(userId, newToken);
-      await notifyOwner(`▶️ Conversa ${userId} reativada e bot liberado fora do horário por 1h.`);
+      const pending = await getPendingMessages(userId);
+      if (pending.length > 0) {
+        const newToken = `${userId}_${Date.now()}`;
+        await setDebounceToken(userId, newToken);
+        processMessages(userId, newToken);
+      }
+      const igUsername = await redisGet(`ig_username:${userId}`);
+      await notifyOwner(`▶️ ${userId}${igUsername ? ` (@${igUsername})` : ""} reativado e liberado fora do horário por 1h.`);
       return;
+    }
+    await redisDel("global:paused");
+    await enableForceOutsideHours(3600);
+    processarFilaAcumulada().catch(err => console.error("Erro ao processar fila no /start:", err));
+    await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
+    return;
+  }
     }
     await redisDel("global:paused");
     await enableForceOutsideHours(3600);
@@ -1904,14 +1894,6 @@ if (cmd.startsWith("/liberar ")) {
     return;
   }
 
-  if (cmd.startsWith("/limpar ")) {
-    const dataISO = parseDateFromCommand(cmd.slice(8));
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /limpar 11/04"); return; }
-    await clearOverride(dataISO);
-    await redisDel(`regra_dia:${dataISO}`);
-    await notifyOwner(`✅ Override e regras especiais removidos para ${formatDateBR(dataISO)}.`);
-    return;
-  }
 
   if (cmd === "/limpar") {
     await notifyOwner("🗑 Iniciando limpeza manual de reservas antigas...");
@@ -1938,9 +1920,6 @@ if (cmd.startsWith("/liberar ")) {
     return;
   }
 
-  if (cmd.startsWith("/dia ")) {
-    const dataISO = parseDateFromCommand(raw.slice(5).trim());
-    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /dia 18/04"); return; }
 
     // verifica se já tem regras salvas
     const regraAtual = await getRegraDia(dataISO);
@@ -1954,6 +1933,44 @@ if (cmd.startsWith("/liberar ")) {
       `📅 Briefing para ${formatDateBR(dataISO)}${msgAtual}\n\n` +
       `Responda com texto livre descrevendo o que for diferente neste dia.\n` +
       `Exemplo: "Aniversário do bar. Programação especial a partir das 15h. Reservas seguradas até as 17h. Limite de 15 reservas. Samba das 18h às 22h."`
+    );
+    return;
+  }
+
+if (cmd.startsWith("/data ")) {
+    const parts = raw.slice(6).trim().split(" ");
+    const dataISO = parseDateFromCommand(parts[0]);
+    if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /data DD/MM esg | ext | limpar | (ou só /data DD/MM para briefing)"); return; }
+    const acao = parts[1]?.toLowerCase();
+
+    if (acao === "esg") {
+      await setOverride(dataISO, "esg");
+      await notifyOwner(`🔴 Override setado: ${formatDateBR(dataISO)} → ESGOTADO`);
+      return;
+    }
+    if (acao === "ext") {
+      await setOverride(dataISO, "ext");
+      await notifyOwner(`🟡 Override setado: ${formatDateBR(dataISO)} → apenas área EXTERNA`);
+      return;
+    }
+    if (acao === "limpar") {
+      await clearOverride(dataISO);
+      await redisDel(`regra_dia:${dataISO}`);
+      await notifyOwner(`✅ Override e briefing removidos para ${formatDateBR(dataISO)}.`);
+      return;
+    }
+
+    // sem ação = briefing
+    const regraAtual = await getRegraDia(dataISO);
+    let msgAtual = "";
+    if (regraAtual?.briefing) {
+      msgAtual = `\n\n⚙️ Briefing atual:\n"${regraAtual.briefing}"`;
+    }
+    await redisSet("telegram:aguardando_dia", dataISO, 300);
+    await notifyOwner(
+      `📅 Briefing para ${formatDateBR(dataISO)}${msgAtual}\n\n` +
+      `Responda com texto livre descrevendo o que for diferente neste dia.\n` +
+      `Exemplo: "Aniversário do bar. Programação especial a partir das 15h. Reservas seguradas até as 17h."`
     );
     return;
   }
@@ -2173,33 +2190,25 @@ await addPendingMessage(userId, ultimaMensagemCliente.content);
     await notifyOwner(
 `📋 Comandos disponíveis:
 
-/Ex DD/MM — Força área EXTERNA para uma data
-Ex: /Ex 11/04
+/start — Reativa bot globalmente e libera fora do horário por 1h
+/start ID ou @username — Reativa usuário específico
 
-/E DD/MM — Força ESGOTADO para uma data
-Ex: /E 11/04
+/data DD/MM — Configura briefing para uma data
+/data DD/MM esg — Força ESGOTADO para uma data
+/data DD/MM ext — Força área EXTERNA para uma data
+/data DD/MM limpar — Remove override e briefing de uma data
 
-/liberar USER_ID — destrava manualmente um cliente
-Ex: /liberar 1604246050664169
+/pausar — Pausa o bot globalmente
 
-/limpar DD/MM — Remove override de uma data
-Ex: /limpar 11/04
+/status — Mostra se o bot está ativo ou pausado
+/status DD/MM — Mostra disponibilidade de uma data
 
 /limpar — Apaga reservas antigas do Notion
 
-/status DD/MM — Mostra disponibilidade de uma data
-Ex: /status 11/04
-
-/status — Mostra se o bot está ativo ou pausado
-
-/dia DD/MM — Configura regras especiais para uma data
-Ex: /dia 18/04
-/retomar USER_ID — Retoma conversa reprocessando última mensagem do cliente
-/pausar — Pausa o bot globalmente
-/reativar — Reativa o bot
-/reativar @username — Reativa pelo @ do Instagram
+/dia DD/MM — Configura briefing (legado, use /data)
 /reservar @username — Grava reserva a partir do histórico
 /marcarreserva @username — Marca flag de reserva manualmente
+/retomar ID — Retoma conversa reprocessando última mensagem
 /help — Mostra esta lista`
     );
     return;

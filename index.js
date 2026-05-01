@@ -1305,6 +1305,7 @@ FLUXO DE RESERVA
 
 * Nunca pular etapas
 * Nunca misturar passos
+* Se o cliente pedir reserva para HOJE, não processar — [ESCALAR: motivo=Reserva para o mesmo dia]
 
 FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
 Quando confirmar uma reserva de SÁBADO, a mensagem de confirmação DEVE mencionar: "a mesa fica segurada até as 15h, com tolerância de 15 minutinhos."
@@ -2356,8 +2357,21 @@ const querAlterarReserva =
 
   let disponibilidadeInfo = "";
   if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
+    const hoje = new Date();
+    const hojeStr = dateToBR(new Date(hoje.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })));
     for (const data of explicitDates) {
       const disp = await verificarDisponibilidade(data);
+      // bloqueia reserva no mesmo dia após horário limite
+      if (data === hojeStr) {
+        const horaAtual = getHoraBrasilia();
+        const diaSemana = getDiaSemana(data);
+        const horariosLimite = { "sexta": 19, "sábado": 15, "domingo": 14, "terça": 19, "quarta": 19, "quinta": 19, "segunda": 19 };
+        const limiteHora = horariosLimite[diaSemana] || 19;
+        if (horaAtual >= limiteHora) {
+          disponibilidadeInfo += `Data ${data}: reservas encerradas para hoje — horário limite já passou.\n`;
+          continue;
+        }
+      }
       console.log(`Disponibilidade para ${data}:`, disp);
       if (disp.tipo === "esgotado") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;

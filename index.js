@@ -1210,6 +1210,13 @@ FEIJOADA
 - Só mencionar se o cliente perguntar
 - Nunca oferecer espontaneamente
 
+DELIVERY
+
+* Delivery disponível apenas às sextas-feiras no almoço, pelo iFood
+* Só mencionar se o cliente perguntar
+* Nunca dizer que não tem delivery sem verificar o dia — se for sexta, informar que tem pelo iFood no almoço
+* Para outros dias: não temos delivery
+
 DISPONIBILIDADE
 
 * "coberto" é interno → nunca mencionar
@@ -3032,7 +3039,13 @@ app.listen(PORT, async () => {
   agendarLimpezaDiaria();
   agendarRotinasDiarias();
   agendarVerificacaoHorario();
-  notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});
+ // notifica apenas uma vez por dia
+  const ultimoOnline = await redisGet("bot:ultimo_online");
+  const hoje = getTodayISO();
+  if (ultimoOnline !== hoje) {
+    await redisSet("bot:ultimo_online", hoje, 86400);
+    notifyOwner("🟢 Bot Candiá iniciado e online!").catch(() => {});
+  }
   // processa mensagens acumuladas durante downtime/restart
   if (await isHorarioComercial()) {
     console.log("Startup dentro do horário — processando fila acumulada");

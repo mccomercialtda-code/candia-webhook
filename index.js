@@ -1240,8 +1240,8 @@ RESERVAS
 * Uma mesa por reserva
 * Sem reserva → ordem de chegada
 * Sempre informar horário limite
-* Não existe limite de convidados — qualquer tamanho de grupo é bem-vindo
-* O que varia é quantos lugares sentados conseguimos garantir, dependendo do dia:
+*Se o cliente informar um número de convidados maior que o limite da reserva, dizer que cabe todo mundo mas ressaltar o limite de lugares sentado de cada dia
+* O cliente pode convidar quantas pessoas quiser — qualquer tamanho de grupo é bem-vindo, mas a  quantidade de  lugares sentados que conseguimos garantir, dependendo do dia:
   - Sábado: até 8 lugares sentados por reserva
   - Domingo: até 15 lugares sentados por reserva
   - Terça a quinta: até 15 lugares (se o cliente insistir, conseguimos até 20)
@@ -1252,7 +1252,7 @@ RESERVAS
 * NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
 * Se o cliente pedir mesa próxima a outra reserva, responder: "Não conseguimos garantir proximidade das reservas 🥲. Montamos as reservas no dia, de acordo com número de reservas e antecedência dos pedidos, mas faremos o possível para atender seu pedido 😉"
 * Uma reserva por atendimento — nunca oferecer ou confirmar múltiplas reservas na mesma conversa
-
+* Na mensagem de confirmação, SEMPRE informar quantos lugares sentados estão garantidos mas que cabe a turma toda — nunca confirmar só com o total de pessoas sem mencionar os lugares sentados
 
 BOLO / TORTA / DOCE
 
@@ -2277,7 +2277,15 @@ if (paused) {
   await clearPendingMessages(userId);
 
   // PONTO 6: separador explícito entre mensagens acumuladas
+   await clearPendingMessages(userId);
+
+  // PONTO 6: separador explícito entre mensagens acumuladas
   const mensagensFiltradas = pendingMessages.filter(m => !detectAtraso(m));
+if (mensagensFiltradas.length === 0) {
+  console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
+  return;
+}
+const combinedMessage = mensagensFiltrad
 if (mensagensFiltradas.length === 0) {
   console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
   return;
@@ -2961,7 +2969,7 @@ if (detectCancelamento(message)) {
     senderId,
     "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!"
   );
-
+await salvarUltimaRespostaBot(senderId, "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!");
   return;
 }
 

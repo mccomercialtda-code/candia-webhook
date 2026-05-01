@@ -1897,24 +1897,7 @@ if (cmd.startsWith("/liberar ")) {
     await notifyOwner(msg);
     return;
   }
-
-
-    // verifica se já tem regras salvas
-    const regraAtual = await getRegraDia(dataISO);
-    let msgAtual = "";
-    if (regraAtual?.briefing) {
-      msgAtual = `\n\n⚙️ Briefing atual:\n"${regraAtual.briefing}"`;
-    }
-
-    await redisSet("telegram:aguardando_dia", dataISO, 300);
-    await notifyOwner(
-      `📅 Briefing para ${formatDateBR(dataISO)}${msgAtual}\n\n` +
-      `Responda com texto livre descrevendo o que for diferente neste dia.\n` +
-      `Exemplo: "Aniversário do bar. Programação especial a partir das 15h. Reservas seguradas até as 17h. Limite de 15 reservas. Samba das 18h às 22h."`
-    );
-    return;
-  }
-
+  
 if (cmd.startsWith("/data ")) {
     const parts = raw.slice(6).trim().split(" ");
     const dataISO = parseDateFromCommand(parts[0]);

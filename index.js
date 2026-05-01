@@ -1813,22 +1813,7 @@ if (cmd.startsWith("/liberar ")) {
     await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
     return;
   }
-
-        }
-        userId = found;
-      }
-
-      await limparConversaEscalada(userId);
-      await redisDel(`paused:${userId}`);
-      const username = await redisGet(`ig_username:${userId}`);
-      await notifyOwner(`▶️ Conversa ${userId}${username ? ` (@${username})` : ""} reativada!`);
-      return;
-    }
-    await redisDel("global:paused");
-    await notifyOwner("▶️ Bot reativado globalmente!");
-    return;
-  }
-
+       
  if (cmd.startsWith("/start")) {
     const parts = raw.split(" ");
     if (parts.length > 1) {
@@ -1889,7 +1874,7 @@ if (cmd.startsWith("/liberar ")) {
     await notifyOwner(
       paused
         ? "⏸ Bot está PAUSADO globalmente."
-        : `▶️ Bot está ATIVO. Horário: ${BOT_HORA_INICIO}h às ${BOT_HORA_FIM}h. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}${forceOutside ? " | modo forçado fora do horário ligado 🔓" : ""}`
+        : `▶️ Bot está ATIVO. Agora: ${comercial ? "dentro do horário ✅" : "fora do horário 🌙"}${forceOutside ? " | modo forçado fora do horário ligado 🔓" : ""}`
     );
     return;
   }
@@ -2402,7 +2387,7 @@ const querAlterarReserva =
   }
 
   history.push({ role: "user", content: combinedMessage });
-  if (history.length > 20) history.splice(0, 2);
+  if (history.length > 40) history.splice(0, 2);
 
   paused = await isPaused(userId);
   if (paused) {
@@ -2810,7 +2795,7 @@ app.post("/", async (req, res) => {
   if (echoText) {
     const hist = await getHistory(recipientId);
     hist.push({ role: "assistant", content: `[atendente] ${echoText}` });
-    if (hist.length > 20) hist.splice(0, 2);
+    if (hist.length > 40) hist.splice(0, 2);
     await saveHistory(recipientId, hist);
     console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
   }

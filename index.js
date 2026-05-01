@@ -1859,14 +1859,7 @@ if (cmd.startsWith("/liberar ")) {
     await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
     return;
   }
-    }
-    await redisDel("global:paused");
-    await enableForceOutsideHours(3600);
-    processarFilaAcumulada().catch(err => console.error("Erro ao processar fila no /start:", err));
-    await notifyOwner("▶️ Bot reativado globalmente e liberado fora do horário por 1h.");
-    return;
-  }
-
+ 
   if (cmd === "/status") {
     const paused = await isGloballyPaused();
     const comercial = await isHorarioComercial();

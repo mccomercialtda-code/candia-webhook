@@ -2285,7 +2285,6 @@ if (mensagensFiltradas.length === 0) {
   console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
   return;
 }
-const combinedMessage = mensagensFiltrad
 if (mensagensFiltradas.length === 0) {
   console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
   return;

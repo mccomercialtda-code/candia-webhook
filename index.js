@@ -1414,8 +1414,8 @@ FERIADOS E DATAS ESPECIAIS
 * Se não houver BRIEFING DO DIA no prompt, seguir as regras padrão do dia da semana normalmente
 * Nunca assumir que feriado = formato de sábado ou qualquer outro formato especial
 
-Seja sempre acolhedor. Nunca deixe o cliente sem resposta.
-
+Seja sempre acolhedor. Nunca deixe o cliente sem resposta.`;
+ }
 
 // ─── Helpers de mensagem ──────────────────────────────────────────────────────
 

@@ -1085,11 +1085,12 @@ async function sincronizarReservasClientes() {
     for (const key of keys) {
       const userId = key.replace("ig_username:", "");
       if (await redisGet(`reserva_confirmada:${userId}`)) continue;
-      const pageId = await buscarPageIdPorInstagram(userId);
+     const pageId = await buscarPageIdPorInstagram(userId);
       if (pageId) {
         await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
         console.log(`Flag reserva sincronizada para ${userId}`);
       }
+      await sleep(300); // evita rate limit do Notion
     }
   } catch (err) {
     console.error("Erro ao sincronizar reservas:", err);
@@ -1248,7 +1249,8 @@ MÚSICA AO VIVO
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
 * Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder qualquer pergunta sobre música, artista, horário, estilo ou Instagram do artista — mesmo que a pergunta seja indireta
 * Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ da programação — nunca redirecione para @ocandiabar nesse caso
-* Só redirecionar para @ocandiabar se NÃO houver PROGRAMAÇÃO DO DIA no prompt
+* Só redirecionar para @ocandiabar se NÃO houver PROGRAMAÇÃO DO DIA no prompt — nesse caso, responder: "A programação completa está nos destaques do nosso Instagram @ocandiabar, no tópico 'Agenda' 😊"
+* NUNCA dizer apenas "acompanhe pelo Instagram" sem especificar onde encontrar
 * Nunca inventar nomes de artistas ou horários
 * NUNCA dizer "deixa eu checar", "vou verificar", "em breve retorno" sobre programação — se houver PROGRAMAÇÃO DO DIA no prompt, responda imediatamente com os dados
 * Se o BRIEFING DO DIA começar com "MENSAGEM EXATA:", use obrigatoriamente o texto que segue como resposta — sem alterar nenhuma palavra
@@ -1308,6 +1310,8 @@ DISPONIBILIDADE
 
 * "coberto" é interno → nunca mencionar
 * Só mencionar área externa se for a única opção
+* Se precisar mencionar área externa, descrever como: "é na calçada, ao ar livre"
+* Nunca dizer "é dentro do bar sem cobertura"
 * Nunca falar "área interna"
 
 ESGOTADO / SEM RESERVAS DISPONÍVEIS
@@ -1381,6 +1385,10 @@ SÁBADO (OBRIGATÓRIO)
 
 * Mesa até 8 lugares, segurada até as 15h (tolerância de 15 minutinhos)
 * ATENÇÃO: estas regras são EXCLUSIVAS do sábado — nunca aplicar para outros dias da semana
+* VERIFICAÇÃO OBRIGATÓRIA: antes de mencionar "15h", "mesa segurada até as 15h" ou qualquer horário de sábado, confirme que a data é um sábado. Se for sexta, domingo ou qualquer outro dia, use as regras daquele dia
+* Se a data for sexta: mesa segurada até as 19h
+* Se a data for domingo: mesa segurada até as 14h
+* Se a data for terça a quinta: mesa segurada até as 19h
 * Restante fica em volta curtindo o samba
 * Sempre vender como experiência positiva
 * Nunca falar área interna

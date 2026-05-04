@@ -20,13 +20,13 @@ const FOLLOWUP_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Horário de funcionamento do bot (Brasília)
 const HORARIOS_ATENDIMENTO = {
-  1: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // segunda
-  2: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // terça
-  3: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // quarta
-  4: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // quinta
-  5: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 17 }, { inicio: 18, fim: 22 }], // sexta
-  6: [{ inicio: 9, fim: 14 }, { inicio: 16, fim: 22 }], // sábado
-  0: [{ inicio: 9, fim: 13 }, { inicio: 15, fim: 22 }],  // domingo
+  1: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 23 }], // segunda
+  2: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 23 }], // terça
+  3: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 23 }], // quarta
+  4: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 23 }], // quinta
+  5: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 18 }, { inicio: 19, fim: 23 }], // sexta
+  6: [{ inicio: 8, fim: 14 }, { inicio: 16, fim: 23 }], // sábado
+  0: [{ inicio: 8, fim: 13 }, { inicio: 14:30, fim: 23 }],  // domingo
 };
 
 const LIMITES = {
@@ -275,7 +275,7 @@ async function salvarReservaNaNotion(data, instagramId) {
     "Notion-Version": "2022-06-28"
   };
 
-  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
     try {
       const res = await fetch("https://api.notion.com/v1/pages", { method: "POST", headers, body });
       const result = await res.json();
@@ -290,7 +290,7 @@ async function salvarReservaNaNotion(data, instagramId) {
       console.error(`Exceção ao gravar no Notion (tentativa ${tentativa}):`, err);
     }
 
-    if (tentativa < 2) await sleep(3000);
+    if (tentativa < 2) await sleep(5000);
   }
 
   // Ambas as tentativas falharam — notifica com dados completos para salvar manualmente

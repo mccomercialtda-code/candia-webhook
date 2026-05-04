@@ -2981,25 +2981,21 @@ if (detectCancelamento(message)) {
   console.log(`Cancelamento detectado de ${senderId}`);
 
   const username = await redisGet(`ig_username:${senderId}`);
-
   await notifyOwner(
     `⚠️ Cliente quer cancelar reserva\nID: ${senderId}\n@${username || "sem_username"}`
-    // cancela reserva no Notion
-  cancelarReservaNoNotion(senderId).catch(err => console.error("Erro ao cancelar reserva no Notion:", err));
   );
-
+  // cancela reserva no Notion
+  cancelarReservaNoNotion(senderId).catch(err => console.error("Erro ao cancelar reserva no Notion:", err));
   // limpa fila para evitar processamento de mensagens subsequentes
   await clearPendingMessages(senderId);
   await setDebounceToken(senderId, `cancelled_${Date.now()}`);
-
   // evita echo
   await redisSet(`echo_bot:${senderId}`, "1", 30);
-
   await sendInstagramMessage(
     senderId,
     "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!"
   );
-await salvarUltimaRespostaBot(senderId, "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!");
+  await salvarUltimaRespostaBot(senderId, "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!");
   return;
 }
 

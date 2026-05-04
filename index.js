@@ -928,7 +928,7 @@ async function detectarMotivoContato(mensagem) {
   const t = mensagem.toLowerCase();
   if (t.includes("reserva") || t.includes("reservar") || t.includes("mesa") || t.includes("aniversário") || t.includes("aniversario")) return "Reserva";
   if (t.includes("programação") || t.includes("programacao") || t.includes("show") || t.includes("banda") || t.includes("musica") || t.includes("música") || t.includes("samba")) return "Programação";
-  if (t.includes("cancelar") || t.includes("cancelamento") || t.includes("desmarcar")) return "Cancelamento";
+  if (t.includes("cancel") || t.includes("desmarcar")) return "Cancelamento";
   return "Informações";
 }
 
@@ -1338,6 +1338,7 @@ RESERVAS
   - Terça a quinta: até 15 lugares (se o cliente insistir, conseguimos até 20)
   - Sexta: até 12 lugares sentados por reserva
 * Só mencionar o limite de lugares depois que a data estiver definida
+* Só mencionar o limite de lugares sentados se o número de pessoas informado pelo cliente for MAIOR que o limite do dia — se for igual ou menor, não mencionar
 * Nunca dizer que não pode vir por causa do tamanho do grupo
 * Se alguém pedir reserva para outras pessoas do grupo, informar que cada pessoa precisa entrar em contato separadamente para fazer sua própria reserva
 * NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
@@ -2691,14 +2692,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
         "Temos disponibilidade para esse dia, mas agora somente na área externa/descoberta.\n" +
         "Podemos seguir com a reserva assim?";
 
-      await notifyOwner(
-        `⚠️ Reserva aguardando aceite de área externa\n` +
-        `Cliente: ${userId}\n` +
-        `Data: ${reservation.data}\n` +
-        `Nome: ${reservation.aniversariante}\n` +
-        `Lugares: ${reservation.lugares} | Total: ${reservation.total_esperado}`
-      );
-
+      
       await redisSet(`echo_bot:${userId}`, "1", 180);
       await sendInstagramMessage(userId, msgExterna);
       await salvarUltimaRespostaBot(userId, msgExterna);

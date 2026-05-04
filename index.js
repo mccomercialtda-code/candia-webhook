@@ -675,6 +675,54 @@ async function enviarRelatorioSemanal() {
 }
 
 // ─── Agendamentos ─────────────────────────────────────────────────────────────
+async function sincronizarClientesComReservas() {
+  try {
+    console.log("Sincronizando clientes com reservas...");
+    let hasMore = true;
+    let startCursor = undefined;
+
+    while (hasMore) {
+      const bodyObj = { page_size: 100 };
+      if (startCursor) bodyObj.start_cursor = startCursor;
+
+      const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${NOTION_TOKEN}`,
+          "Content-Type": "application/json",
+          "Notion-Version": "2022-06-28"
+        },
+        body: JSON.stringify(bodyObj)
+      });
+      const data = await res.json();
+      const pages = data.results || [];
+
+      for (const page of pages) {
+        const igId = page.properties?.["Instagram ID"]?.rich_text?.[0]?.text?.content || "";
+        const nome = page.properties?.Nome?.title?.[0]?.text?.content || "";
+        const contato = page.properties?.Contato?.rich_text?.[0]?.text?.content || "";
+        const igUsername = page.properties?.["Instagram Username"]?.rich_text?.[0]?.text?.content || "";
+
+        if (!igId && !igUsername) continue;
+
+        await criarOuAtualizarCliente(igId || "sem_id", {
+          nome: nome || undefined,
+          telefone: contato ? contato.replace(/\D/g, "") : undefined,
+          username: igUsername || undefined,
+          origem: "Orgânico",
+          motivo: "Reserva",
+          atualizarReserva: false
+        });
+      }
+
+      hasMore = data.has_more || false;
+      startCursor = data.next_cursor || undefined;
+    }
+    console.log("Sincronização de clientes concluída.");
+  } catch (err) {
+    console.error("Erro ao sincronizar clientes com reservas:", err);
+  }
+}
 
 function agendarLimpezaDiaria() {
   function msAte10h() {
@@ -691,8 +739,10 @@ function agendarLimpezaDiaria() {
     return target.getTime() - brt.getTime();
   }
 
-  async function executar() {
+async function executar() {
     try {
+      // sincroniza clientes antes de limpar reservas
+      await sincronizarClientesComReservas();
       const removidas = await limparReservasAntigas();
 
       if (removidas > 0) {
@@ -882,7 +932,7 @@ async function detectarMotivoContato(mensagem) {
   return "Informações";
 }
 
-async function buscarClienteNotion(instagramId) {
+async function buscarClienteNotion(instagramId, username = "") {
   try {
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_CLIENTES_DB_ID}/query`, {
       method: "POST",
@@ -898,7 +948,27 @@ async function buscarClienteNotion(instagramId) {
     });
    const data = await res.json();
     if (data.object === "error") console.error("Erro Notion buscar cliente:", JSON.stringify(data));
-    if (data.results && data.results.length > 0) return data.results[0];
+if (data.results && data.results.length > 0) return data.results[0];
+
+    // fallback: busca por username se ID não encontrou
+    if (username) {
+      const usernameClean = username.replace("@", "").toLowerCase();
+      const res2 = await fetch(`https://api.notion.com/v1/databases/${NOTION_CLIENTES_DB_ID}/query`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${NOTION_TOKEN}`,
+          "Content-Type": "application/json",
+          "Notion-Version": "2022-06-28"
+        },
+        body: JSON.stringify({
+          filter: { property: "Username", rich_text: { contains: usernameClean } },
+          page_size: 1
+        })
+      });
+      const data2 = await res2.json();
+      if (data2.results && data2.results.length > 0) return data2.results[0];
+    }
+
     return null;
   } catch (err) {
     console.error("Erro ao buscar cliente no Notion:", err);
@@ -908,7 +978,7 @@ async function buscarClienteNotion(instagramId) {
 
 async function criarOuAtualizarCliente(userId, { nome, telefone, username, origem, motivo, atualizarReserva = false, observacao = "" } = {}) {
   try {
-    const clienteExistente = await buscarClienteNotion(userId);
+    const clienteExistente = await buscarClienteNotion(userId, username || "");
     const agora = new Date().toISOString().split("T")[0];
 
     if (clienteExistente) {

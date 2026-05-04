@@ -26,7 +26,7 @@ const HORARIOS_ATENDIMENTO = {
   4: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 23 }], // quinta
   5: [{ inicio: 8, fim: 12 }, { inicio: 13, fim: 18 }, { inicio: 19, fim: 23 }], // sexta
   6: [{ inicio: 8, fim: 14 }, { inicio: 16, fim: 23 }], // sábado
-  0: [{ inicio: 8, fim: 13 }, { inicio: 15:00, fim: 23 }],  // domingo
+  0: [{ inicio: 8, fim: 13 }, { inicio: 15, fim: 23 }],  // domingo
 };
 
 const LIMITES = {

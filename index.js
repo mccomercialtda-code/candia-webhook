@@ -2664,31 +2664,28 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
         })
       });
 
-      claudeData = await claudeRes.json();
-
+   claudeData = await claudeRes.json();
       if (claudeData.error) {
         console.error(`Erro da API Claude (tentativa ${tentativa}):`, claudeData.error);
-        if (tentativa === 2) {
+        if (tentativa === 3) {
           await notifyOwner(
             `⚠️ Erro na API do Claude!\nCliente ID: ${userId}\nErro: ${claudeData.error.type} — ${claudeData.error.message}\nVerifique os créditos em console.anthropic.com`
           );
           return;
         }
-        await sleep(3000);
+        await sleep(10000);
         continue;
       }
-
       break; // sucesso
     } catch (err) {
       console.error(`Exceção ao chamar a API Claude (tentativa ${tentativa}):`, err);
-      if (tentativa === 2) {
+      if (tentativa === 3) {
         await notifyOwner(`⚠️ Erro ao chamar a API Claude.\nCliente ID: ${userId}\nErro: ${err.message || err}`);
         return;
       }
-      await sleep(3000);
+      await sleep(10000);
     }
   }
-
   let reply = claudeData.content?.[0]?.text;
 
   if (!reply) {

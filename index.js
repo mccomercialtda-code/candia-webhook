@@ -1464,6 +1464,11 @@ E incluir no final:
 
 RECLAMAÇÕES
 
+* Se o cliente demonstrar frustração, discordar de uma informação que o bot deu, ou indicar que o bot errou algo (ex: "não é isso que foi combinado", "você disse errado", "já avisei isso", "não é essa data"), responder exatamente:
+  "Peço desculpas pela confusão! 🙏 Sou um assistente virtual e pode ter havido um erro no meu atendimento. Vou transferir você para um de nossos atendentes agora mesmo para resolver isso certinho. Em breve alguém te retorna por aqui 😊"
+* E incluir: [ESCALAR: motivo=Erro no atendimento — cliente questionou informação]
+* NUNCA tentar corrigir ou justificar o erro sozinho — sempre escalar
+* ATENÇÃO: isso é diferente de quando o cliente quer simplesmente alterar ou atualizar dados da reserva — nesse caso, seguir o fluxo normal
 * Se o cliente reclamar do atendimento, do bar ou de qualquer aspecto da experiência, responder com empatia e escalar imediatamente
 * Responder: "Sentimos muito por isso 😕 Vou passar sua mensagem para a equipe agora mesmo."
 * E incluir: [ESCALAR: motivo=Reclamação do cliente]
@@ -2362,10 +2367,11 @@ if (paused) {
   }
 }
 
-  if (await isGloballyPaused()) {
-    console.log(`Bot pausado globalmente — cancelando processamento para ${userId}`);
-    return;
-  }
+if (await isGloballyPaused()) {
+  console.log(`Bot pausado globalmente — mensagem de ${senderId} adicionada à fila`);
+  await addPendingMessage(senderId, message);
+  return;
+}
 
   const pendingMessages = await getPendingMessages(userId);
   if (pendingMessages.length === 0) {

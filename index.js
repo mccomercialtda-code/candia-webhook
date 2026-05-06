@@ -1090,7 +1090,7 @@ async function sincronizarReservasClientes() {
         await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
         console.log(`Flag reserva sincronizada para ${userId}`);
       }
-      await sleep(300); // evita rate limit do Notion
+      await sleep(1000); // evita rate limit do Notion
     }
   } catch (err) {
     console.error("Erro ao sincronizar reservas:", err);
@@ -1316,6 +1316,7 @@ DISPONIBILIDADE
 
 ESGOTADO / SEM RESERVAS DISPONÍVEIS
 
+* NUNCA dizer que está esgotado para um cliente que já tem reserva confirmada — ele já garantiu o lugar dele
 Se as reservas estiverem esgotadas, nunca dizer que o cliente não pode vir.
 
 Responder de forma leve:
@@ -1562,9 +1563,11 @@ function detectCancelamento(text) {
   if (!text) return false;
   const t = text.toLowerCase();
   return (
-    t.includes("cancelar") || t.includes("cancelamento") ||
+    t.includes("cancel") ||
     t.includes("não vou mais") || t.includes("nao vou mais") ||
-    t.includes("não vou conseguir") || t.includes("desmarcar")
+    t.includes("não vou conseguir") || t.includes("desmarcar") ||
+    t.includes("desfazer a reserva") || t.includes("desistir da reserva") ||
+    t.includes("não vou mais à reserva") || t.includes("nao vou mais a reserva")
   );
 }
 
@@ -2523,7 +2526,11 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   await sendInstagramMessage(userId, "Olá! Vou te passar para um de nossos atendentes agora 😊 Em breve alguém te responde por aqui!");
   return;
 }
-  
+
+ // não injeta esgotado se cliente já tem reserva
+if (jaTemReserva && disponibilidadeInfo.includes("ESGOTADA")) {
+  disponibilidadeInfo = disponibilidadeInfo.replace(/.*ESGOTADA.*\n/g, "");
+} 
 if (regrasDiaConsulta?.briefing || programacaoConsulta) {
   systemPrompt += `\n\nATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA:\n`;
   if (regrasDiaConsulta?.briefing) {

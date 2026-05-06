@@ -1109,7 +1109,7 @@ async function gerarResumoConversa(hist) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-       system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. IMPORTANTE: se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
+        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. IMPORTANTE: se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. Nunca dizer que reserva está confirmada sem o bloco [RESERVA: ...]. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
         messages: [{ role: "user", content: hist.map(h => `${h.role}: ${h.content}`).join("\n") }]
       })
     });
@@ -2497,7 +2497,7 @@ function getPrimaryDate(explicitDates, currentMessage) {
       // ignora datas inválidas como 25/30
       return !isNaN(x.dt.getTime()) && x.dt >= hoje;
     })
-    .sort((a,b) => a.dt - b.dt);
+    .sort((a,b) => b.dt - a.dt);
   return futuras.length > 0 ? futuras[0].d : null;
 }
 const dataPrincipal = getPrimaryDate(explicitDates, combinedMessage);
@@ -3029,7 +3029,8 @@ if (hasMedia && !isOnlyPhoneNumber(message)) {
     console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
     return;
   } else {
-    if (await isHorarioComercial()) {
+   if (await isHorarioComercial()) {
+      await redisSet(`echo_bot:${senderId}`, "1", 180);
       await sendInstagramMessage(
         senderId,
         "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"

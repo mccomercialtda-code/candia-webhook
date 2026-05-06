@@ -1768,8 +1768,8 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  // pausa temporária por 2 horas após intervenção humana
-  const ttl = 60 * 60 * 2; // 2h em segundos
+  // pausa temporária por 15 minutos após intervenção humana
+  const ttl = 60 * 15; // 15min em segundos
 
   await redisSet(`paused:${userId}`, "1", ttl);
 
@@ -1790,7 +1790,7 @@ async function getPendingMessages(userId) {
 async function addPendingMessage(userId, message) {
   const messages = await getPendingMessages(userId);
   messages.push(message);
-  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400);
+  await redisSet(`pending:${userId}`, JSON.stringify(messages), 86400 * 2);
   // renova TTL do histórico para que conversas que voltam no dia seguinte não percam contexto
   const hist = await redisGet(`hist:${userId}`);
   if (hist) await redisSet(`hist:${userId}`, hist, 86400 * 7);
@@ -2219,37 +2219,102 @@ Verifique a conversa manualmente.`);
     return;
   }
 
-if (cmd.startsWith("/retomar ")) {
-  const userId = raw.split(" ")[1]?.trim();
-  if (!userId) { await notifyOwner("⚠️ Use: /retomar USER_ID"); return; }
+if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
+    const parts = raw.split(" ");
+    
+    // sem argumento = retoma todos
+    if (parts.length === 1) {
+      const res = await fetch(`${UPSTASH_URL}/keys/paused:*`, {
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const data = await res.json();
+      const keys = data.result || [];
+      if (keys.length === 0) {
+        await notifyOwner("✅ Nenhuma conversa pausada no momento.");
+        return;
+      }
+      let retomadas = 0;
+      for (const key of keys) {
+        const userId = key.replace("paused:", "");
+        await redisDel(`paused:${userId}`);
+        await redisDel(`humano_encerrou:${userId}`);
+        await redisDel(`humano_informou:${userId}`);
+        await limparConversaEscalada(userId);
+        const pending = await getPendingMessages(userId);
+        if (pending.length > 0) {
+          const newToken = `${userId}_${Date.now()}`;
+          await setDebounceToken(userId, newToken);
+          processMessages(userId, newToken);
+          retomadas++;
+        }
+      }
+      await notifyOwner(`▶️ ${keys.length} conversa(s) despausada(s). ${retomadas} com mensagens na fila processadas.`);
+      return;
+    }
 
-  await redisDel(`paused:${userId}`);
-  await redisDel(`humano_encerrou:${userId}`);
-  await redisDel(`humano_informou:${userId}`);
-  await redisDel(`followup:${userId}`);
-  await limparConversaEscalada(userId);
+    // com argumento = retoma específico
+    let userId = parts[1].trim();
+    if (userId.startsWith("@")) {
+      const username = userId.slice(1).toLowerCase();
+      const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const data = await res.json();
+      const keys = data.result || [];
+      let found = null;
+      for (const key of keys) {
+        const val = await redisGet(key);
+        if (val && val.toLowerCase() === username) {
+          found = key.replace("ig_username:", "");
+          break;
+        }
+      }
+      if (!found) { await notifyOwner(`⚠️ Usuário ${userId} não encontrado no cache.`); return; }
+      userId = found;
+    }
 
-  const hist = await getHistory(userId);
-  if (hist.length === 0) {
-    await notifyOwner(`⚠️ Nenhum histórico encontrado para ${userId}`);
+    await redisDel(`paused:${userId}`);
+    await redisDel(`humano_encerrou:${userId}`);
+    await redisDel(`humano_informou:${userId}`);
+    await redisDel(`followup:${userId}`);
+    await limparConversaEscalada(userId);
+
+    const hist = await getHistory(userId);
+    if (hist.length === 0) {
+      const pending = await getPendingMessages(userId);
+      if (pending.length > 0) {
+        const newToken = `${userId}_${Date.now()}`;
+        await setDebounceToken(userId, newToken);
+        processMessages(userId, newToken);
+        await notifyOwner(`▶️ Retomando conversa com ${userId} via fila pendente`);
+      } else {
+        await notifyOwner(`⚠️ Nenhuma mensagem encontrada para ${userId} — peça ao cliente para enviar uma nova mensagem`);
+      }
+      return;
+    }
+
+    const ultimas10 = hist.slice(-10);
+    const ultimaMensagemCliente = [...ultimas10].reverse().find(h => h.role === "user");
+    if (!ultimaMensagemCliente) {
+      const pending = await getPendingMessages(userId);
+      if (pending.length > 0) {
+        const newToken = `${userId}_${Date.now()}`;
+        await setDebounceToken(userId, newToken);
+        processMessages(userId, newToken);
+        await notifyOwner(`▶️ Retomando conversa com ${userId} via fila pendente`);
+      } else {
+        await notifyOwner(`⚠️ Nenhuma mensagem encontrada para ${userId} — peça ao cliente para enviar uma nova mensagem`);
+      }
+      return;
+    }
+
+    await addPendingMessage(userId, ultimaMensagemCliente.content);
+    const newToken = `${userId}_${Date.now()}`;
+    await setDebounceToken(userId, newToken);
+    processMessages(userId, newToken);
+    await notifyOwner(`▶️ Retomando conversa com ${userId}`);
     return;
   }
-
-  // pega últimas 10 mensagens para contexto e usa a última do cliente como gatilho
-  const ultimas10 = hist.slice(-10);
-  const ultimaMensagemCliente = [...ultimas10].reverse().find(h => h.role === "user");
-  if (!ultimaMensagemCliente) {
-    await notifyOwner(`⚠️ Nenhuma mensagem do cliente no histórico de ${userId}`);
-    return;
-  }
-
-await addPendingMessage(userId, ultimaMensagemCliente.content);
-  const newToken = `${userId}_${Date.now()}`;
-  await setDebounceToken(userId, newToken);
-  processMessages(userId, newToken);
-  await notifyOwner(`▶️ Retomando conversa com ${userId}`);
-  return;
-}
   
   if (cmd === "/help") {
     await notifyOwner(

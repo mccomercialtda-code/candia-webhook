@@ -1090,7 +1090,7 @@ async function sincronizarReservasClientes() {
         await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
         console.log(`Flag reserva sincronizada para ${userId}`);
       }
-      await sleep(1000); // evita rate limit do Notion
+      await sleep(2000); // evita rate limit do Notion
     }
   } catch (err) {
     console.error("Erro ao sincronizar reservas:", err);
@@ -2550,11 +2550,22 @@ const querAlterarReserva =
   }
 
   // busca regras especiais do dia atual
-function getPrimaryDate(explicitDates, currentMessage) {
+function getPrimaryDate(explicitDates, currentMessage, history = []) {
   if (!explicitDates || explicitDates.length === 0) return null;
   // prioriza datas da mensagem atual
   const datesInCurrent = extractExplicitDates(currentMessage);
   if (datesInCurrent.length > 0) return datesInCurrent[0];
+  // segunda prioridade: últimas 3 mensagens do histórico
+  const ultimas3 = history.slice(-3).map(h => h.content || "").join(" ");
+  const datesInRecent = extractExplicitDates(ultimas3);
+  if (datesInRecent.length > 0) {
+    const hoje = new Date();
+    const futuras = datesInRecent
+      .map(d => { const [dia,mes,ano] = d.split("/"); return { d, dt: new Date(`${ano}-${mes}-${dia}`) }; })
+      .filter(x => !isNaN(x.dt.getTime()) && x.dt >= hoje)
+      .sort((a,b) => b.dt - a.dt);
+    if (futuras.length > 0) return futuras[0].d;
+  }
   // fallback: mais recente no histórico que seja futura
   const hoje = new Date();
   const futuras = explicitDates
@@ -2566,7 +2577,7 @@ function getPrimaryDate(explicitDates, currentMessage) {
     .sort((a,b) => b.dt - a.dt);
   return futuras.length > 0 ? futuras[0].d : null;
 }
-const dataPrincipal = getPrimaryDate(explicitDates, combinedMessage);
+const dataPrincipal = getPrimaryDate(explicitDates, combinedMessage, history);
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 const regrasDiaConsulta = dataISOConsulta

@@ -1336,6 +1336,13 @@ FORMA DE PAGAMENTO / COMANDA
   "De sexta a domingo trabalhamos com pagamento antecipado, via fichas. Aí não precisa se preocupar em dividir a conta, cada um paga o seu 😜"
 * Só mencionar se perguntarem
 
+VALE ALIMENTAÇÃO / VALE REFEIÇÃO
+
+* Aceitamos vale alimentação, vale refeição, VR, Sodexo, Ticket e similares APENAS no almoço de sexta-feira
+* Para qualquer outro dia ou período: não aceitamos
+* Se perguntarem se aceitam, verificar: se for sexta no almoço, confirmar que sim. Caso contrário, informar que não aceitamos
+* Nunca dizer que aceitamos sem essa condição — só sexta no almoço
+
 CERVEJAS SEM ÁLCOOL
 
 * Temos Heineken Zero e Verace IPA Zero disponíveis

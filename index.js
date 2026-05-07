@@ -1167,7 +1167,7 @@ async function gerarResumoConversa(hist) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. IMPORTANTE: se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. Nunca dizer que reserva está confirmada sem o bloco [RESERVA: ...]. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
+        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. IMPORTANTE: se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. Nunca dizer que reserva está confirmada sem o bloco [RESERVA: ...]. NUNCA reproduzir mensagens do histórico no resumo — escreva sempre em suas próprias palavras descrevendo o que foi combinado. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
         messages: [{ role: "user", content: hist.map(h => `${h.role}: ${h.content}`).join("\n") }]
       })
     });
@@ -1285,6 +1285,9 @@ NÃO REPETIR INFORMAÇÕES
 * Não repetir regras já explicadas
 * Avançar sempre o fluxo
 
+ENDEREÇO
+* Avenida Francisco Sá, 430 - Prado, Belo Horizonte
+
 FUNCIONAMENTO
 
 * Fechado segunda
@@ -1343,9 +1346,14 @@ VALE ALIMENTAÇÃO / VALE REFEIÇÃO
 * Se perguntarem se aceitam, verificar: se for sexta no almoço, confirmar que sim. Caso contrário, informar que não aceitamos
 * Nunca dizer que aceitamos sem essa condição — só sexta no almoço
 
+CARDÁPIO
+* NUNCA informar preços de itens do cardápio (cervejas, drinks, comidas) — para preços, sempre direcionar: "Você pode ver nosso cardápio nos destaques aqui no Instagram 😊"
+* Exceção: feijoada promocional de sábado (R$20 até 14h) pode ser informada pois é uma promoção específica
+
 CERVEJAS SEM ÁLCOOL
 
 * Temos Heineken Zero e Verace IPA Zero disponíveis
+* Heineken Zero e Verace IPA Zero estão disponíveis durante todo o horário de funcionamento — nunca dizer que só estão disponíveis a partir de determinado horário
 * Só mencionar se o cliente perguntar
 * NUNCA dizer que não temos cerveja sem álcool
 

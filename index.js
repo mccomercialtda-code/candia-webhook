@@ -203,6 +203,57 @@ async function contarReservasNotion(dataStr) {
   }
 }
 
+async function verificarDisponibilidadeLocal(dataStr, local) {
+  const limites = { "Fundos": 3, "Corredor": 3, "Frente": 4 };
+  const limite = limites[local];
+  if (!limite) return { disponivel: true, count: 0 };
+
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: {
+          and: [
+            { property: "Data", rich_text: { equals: convertDateToISO(dataStr) } },
+            { property: "Local", select: { equals: local } }
+          ]
+        }
+      })
+    });
+    const data = await res.json();
+    const count = data.results?.length || 0;
+    return { disponivel: count < limite, count, limite };
+  } catch (err) {
+    console.error("Erro ao verificar disponibilidade de local:", err);
+    return { disponivel: true, count: 0 };
+  }
+}
+
+async function proximoNumeroDoDia(dataISO) {
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: { property: "Data", rich_text: { equals: dataISO } }
+      })
+    });
+    const data = await res.json();
+    return (data.results?.length || 0) + 1;
+  } catch {
+    return 1;
+  }
+}
+
 async function verificarDisponibilidade(dataStr) {
   const diaSemana = getDiaSemana(dataStr);
   const dataISO = convertDateToISO(dataStr);
@@ -267,6 +318,13 @@ async function salvarReservaNaNotion(data, instagramId) {
       rich_text: [{ text: { content: data.observacao.trim() } }]
     };
   }
+
+  if (data.local && data.local.trim()) {
+    properties["Local"] = { select: { name: data.local.trim() } };
+  }
+
+  const numeroDoDia = await proximoNumeroDoDia(convertDateToISO(data.data));
+  properties["Nº do dia"] = { number: numeroDoDia };
 
   const body = JSON.stringify({ parent: { database_id: NOTION_DB_ID }, properties });
   const headers = {
@@ -1182,7 +1240,7 @@ REGRA GERAL
 * Nunca sugerir nada que o cliente não pediu
 * Respostas curtas e naturais
 * Soar humano, não institucional
-* NUNCA mencionar o dia da semana em nenhuma resposta. É PROIBIDO dizer "é uma sexta", "é um sábado", "cai numa quinta", "dia X é terça" etc. Responda SEMPRE só com a data numérica, jamais com o nome do dia da semana
+* NUNCA mencionar o dia da semana em nenhuma resposta. É ABSOLUTAMENTE PROIBIDO dizer "é uma sexta", "é um sábado", "cai numa quinta", "dia X é terça", "é domingo", "é uma quarta" ou qualquer nome de dia da semana. Esta regra não tem NENHUMA exceção. Responda SEMPRE só com a data numérica (DD/MM ou DD/MM/AAAA), jamais com o nome do dia da semana — mesmo que o cliente pergunte diretamente qual é o dia da semana
 * Nunca usar separadores como "---", "***" ou similares nas mensagens
 * Se o cliente não perguntar diretamente por reserva, pode oferecer — mas somente uma vez. Não ofereça em todas as mensagens
 
@@ -1414,13 +1472,28 @@ FLUXO DE RESERVA
 FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
 Quando confirmar uma reserva de SÁBADO, a mensagem de confirmação DEVE mencionar: "a mesa fica segurada até as 15h, com tolerância de 15 minutinhos."
 Quando confirmar uma reserva, incluir SEMPRE ao final da resposta:
-[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME COMPLETO, contato=TELEFONE, lugares=NUMERO, total_esperado=NUMERO, observacao=TEXTO]
+[RESERVA: data=DD/MM/AAAA, dia=DIASEMANA, aniversariante=NOME COMPLETO, contato=TELEFONE, lugares=NUMERO, total_esperado=NUMERO, observacao=TEXTO, local=NOME_DO_LOCAL]
 
 * "aniversariante" = nome completo (obrigatório)
 * "lugares" = lugares na mesa (8 para sábado)
 * "total_esperado" = total de pessoas do grupo
+* "local" = Fundos, Corredor ou Frente (só preencher se o cliente mencionar preferência)
 * Nunca usar outros campos como "pessoas=", "beneficio=", "grupo="
 * Se faltar campo obrigatório, peça o dado — não gere o bloco incompleto
+
+LOCAIS DE RESERVA
+
+* NUNCA perguntar preferência de local — só informar ou confirmar se o cliente solicitar
+* Se o cliente mencionar preferência de local, identificar qual é e verificar disponibilidade
+* Aliases:
+  - Fundos: "quintal", "lá atrás", "la atras", "perto da parede de desenhos"
+  - Corredor: "lateral", "varanda"
+  - Frente: "bancos da frente", "perto da entrada", "calçada"
+* Se disponível (dentro do limite): confirmar o local
+* Se indisponível (acima do limite): "Faremos o possível para atender seu pedido 😉" — nunca prometer
+* Se perguntarem sobre cobertura: Fundos = coberto, Corredor = coberto, Frente = descoberto
+* Se perguntarem sobre fumar: Fundos = não pode, Corredor = não pode, Frente = pode
+* Incluir no bloco [RESERVA]: local=NOME_DO_LOCAL (ex: local=Fundos)
 
 MÚSICOS
 Se alguém quiser tocar:
@@ -1625,6 +1698,7 @@ function extractReservation(text) {
   if (!obj.total_esperado && obj.pessoas) obj.total_esperado = obj.pessoas;
   if (!obj.total_esperado && obj.total) obj.total_esperado = obj.total;
   if (!obj.lugares && obj.total_esperado) obj.lugares = "8";
+  if (!obj.local) obj.local = "";
   return obj;
 }
 
@@ -2434,8 +2508,7 @@ if (paused) {
 }
 
 if (await isGloballyPaused()) {
-  console.log(`Bot pausado globalmente — mensagem de ${senderId} adicionada à fila`);
-  await addPendingMessage(senderId, message);
+  console.log(`Bot pausado globalmente — mensagens de ${userId} aguardam na fila`);
   return;
 }
 
@@ -2508,7 +2581,9 @@ const querAlterarReserva =
     textoLower.includes("aniversario") ||
     textoLower.includes("tem vaga") ||
     textoLower.includes("disponib") ||
-    querAlterarReserva;
+    querAlterarReserva ||
+    (await redisGet(`aguardando_contato:${userId}`)) !== null ||
+    history.some(h => h.role === "assistant" && h.content?.includes("[RESERVA:"));
 
   let disponibilidadeInfo = "";
   if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
@@ -2592,6 +2667,11 @@ if (dataPrincipal) {
   console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? "encontrada" : "não encontrada"}`);
 }
 
+// não injeta esgotado se cliente já tem reserva
+if (jaTemReserva && disponibilidadeInfo.includes("ESGOTADA")) {
+  disponibilidadeInfo = disponibilidadeInfo.replace(/.*ESGOTADA.*\n/g, "");
+}
+
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
   regrasDiaConsulta
@@ -2610,10 +2690,6 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   return;
 }
 
- // não injeta esgotado se cliente já tem reserva
-if (jaTemReserva && disponibilidadeInfo.includes("ESGOTADA")) {
-  disponibilidadeInfo = disponibilidadeInfo.replace(/.*ESGOTADA.*\n/g, "");
-} 
 if (regrasDiaConsulta?.briefing || programacaoConsulta) {
   systemPrompt += `\n\nATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA:\n`;
   if (regrasDiaConsulta?.briefing) {
@@ -2656,9 +2732,9 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     systemPrompt += `\nRESUMO DO QUE FOI COMBINADO COM ESTE CLIENTE:\n${resumoConversa}\nATENÇÃO: respeite o que foi combinado acima. Se o atendente prometeu algo, isso vale.\n`;
   }
 
-  // PONTO 8: retry na chamada ao Claude (2 tentativas com 3s de intervalo)
+  // retry na chamada ao Claude (3 tentativas com 10s de intervalo)
   let claudeData;
-  for (let tentativa = 1; tentativa <= 2; tentativa++) {
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
     try {
       const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -3009,7 +3085,13 @@ app.post("/", async (req, res) => {
     }
 
     if (await isGloballyPaused()) {
-      console.log(`Bot pausado globalmente — ignorando mensagem de ${senderId}`);
+      const msgTextGlobal = messaging?.message?.text;
+      if (msgTextGlobal) {
+        await addPendingMessage(senderId, msgTextGlobal);
+        console.log(`Bot pausado globalmente — mensagem de ${senderId} adicionada à fila`);
+      } else {
+        console.log(`Bot pausado globalmente — mensagem não-texto de ${senderId} ignorada`);
+      }
       return;
     }
 

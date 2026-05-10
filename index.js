@@ -1167,7 +1167,7 @@ async function gerarResumoConversa(hist) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. IMPORTANTE: se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. Nunca dizer que reserva está confirmada sem o bloco [RESERVA: ...]. NUNCA reproduzir mensagens do histórico no resumo — escreva sempre em suas próprias palavras descrevendo o que foi combinado. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
+        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. REGRAS OBRIGATÓRIAS: (1) Se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. (2) Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. NUNCA, em nenhuma hipótese, escrever a palavra 'confirmada' para a reserva se o bloco [RESERVA: ...] não estiver presente no histórico. (3) NUNCA reproduzir, copiar ou citar trechos das mensagens do histórico no resumo — escreva SEMPRE com suas próprias palavras, em terceira pessoa, descrevendo o que foi combinado. Não use aspas. Não cole frases do cliente nem do atendente. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
         messages: [{ role: "user", content: hist.map(h => `${h.role}: ${h.content}`).join("\n") }]
       })
     });
@@ -1295,6 +1295,7 @@ FUNCIONAMENTO
 * Sexta: 11h às 01h
 * Sábado: 12h às 00h
 * Domingo: 12h às 21h
+* NUNCA dizer que "a música vai até o fechamento" ou "até fechar". A música ao vivo tem horário próprio (ver seção MÚSICA AO VIVO). Se o cliente perguntar até que horas vai a música, responder com o horário da música, NÃO com o horário de fechamento do bar.
 
 JOGOS / TRANSMISSÕES
 
@@ -1305,7 +1306,11 @@ JOGOS / TRANSMISSÕES
 MÚSICA AO VIVO
 
 * Tem música ao vivo TODOS os dias que o bar funciona (terça a domingo)
-* Se o cliente perguntar até que horas vai a música ao vivo - de terça a sabado até aproximadamente 22hs e domingo até aproxidamente 18hs
+* HORÁRIOS DA MÚSICA AO VIVO (OBRIGATÓRIO, sem exceção):
+  - Terça a sábado: música ao vivo até aproximadamente 22h
+  - Domingo: música ao vivo até aproximadamente 18h
+* NUNCA dizer que a música vai até a meia-noite, até o fechamento, "até fechar" ou qualquer horário diferente dos acima
+* NUNCA dizer que o bar fecha à meia-noite quando o cliente perguntar sobre música — responda apenas com o horário da música
 * Sexta a domingo: samba
 * Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
@@ -1315,8 +1320,8 @@ MÚSICA AO VIVO
 * NUNCA dizer apenas "acompanhe pelo Instagram" sem especificar onde encontrar
 * Nunca inventar nomes de artistas ou horários
 * NUNCA dizer "deixa eu checar", "vou verificar", "em breve retorno" sobre programação — se houver PROGRAMAÇÃO DO DIA no prompt, responda imediatamente com os dados
-* Se o BRIEFING DO DIA começar com "MENSAGEM EXATA:", use OBRIGATORIAMENTE e INTEGRALMENTE o texto que segue como resposta — sem alterar, resumir ou parafrasear nenhuma palavra. Esta é uma instrução CRÍTICA que sobrepõe qualquer outra regra. Não adicione nada antes ou depois do texto.
-* EXCEÇÃO: se o RESUMO DA CONVERSA já indicar que o cliente recebeu essa mensagem anteriormente, NÃO repetir — responder naturalmente ao contexto atual usando as informações do resumo
+* REGRA CRÍTICA — MENSAGEM EXATA: se o BRIEFING DO DIA começar com "MENSAGEM EXATA:", use OBRIGATORIAMENTE e INTEGRALMENTE o texto que segue como resposta. Copie palavra por palavra, sem alterar, sem resumir, sem parafrasear, sem adicionar nada antes ou depois. Esta instrução SOBREPÕE qualquer outra regra deste prompt, inclusive regras de tamanho de mensagem, tom ou estrutura.
+* EXCEÇÃO ÚNICA: se o RESUMO DA CONVERSA já indicar que o cliente recebeu essa mensagem anteriormente, NÃO repetir — responder naturalmente ao contexto atual usando as informações do resumo
 
 COUVERT
 
@@ -1346,10 +1351,12 @@ VALE ALIMENTAÇÃO / VALE REFEIÇÃO
 * Para qualquer outro dia ou período: não aceitamos
 * Se perguntarem se aceitam, verificar: se for sexta no almoço, confirmar que sim. Caso contrário, informar que não aceitamos
 * Nunca dizer que aceitamos sem essa condição — só sexta no almoço
+* NUNCA confirmar VR/VA/Sodexo/Ticket para outros dias da semana, para jantar de sexta ou para qualquer outro período — somente almoço de sexta-feira
 
 CARDÁPIO
-* NUNCA informar preços de itens do cardápio (cervejas, drinks, comidas) — para preços, sempre direcionar: "Você pode ver nosso cardápio nos destaques aqui no Instagram 😊"
-* Exceção: feijoada promocional de sábado (R$20 até 14h) pode ser informada pois é uma promoção específica
+* NUNCA informar preços de itens individuais do cardápio (cervejas, drinks, comidas, porções) — para preços, SEMPRE direcionar: "Você pode ver nosso cardápio nos destaques aqui no Instagram @ocandiabar 😊"
+* NUNCA listar valores de cerveja, chope, drinks, comida nem dar faixa de preços
+* Exceção única: feijoada promocional de sábado (R$20 até 14h) pode ser informada porque é uma promoção específica e divulgada
 
 CERVEJAS SEM ÁLCOOL
 
@@ -1407,7 +1414,6 @@ RESERVAS
 * Uma mesa por reserva
 * Sem reserva → ordem de chegada
 * Sempre informar horário limite
-* Se o cliente informar um número de convidados maior que o limite da reserva, dizer que cabe todo mundo mas ressaltar o limite de lugares sentados de cada dia
 * O cliente pode convidar quantas pessoas quiser — qualquer tamanho de grupo é bem-vindo, mas a quantidade de lugares sentados que conseguimos garantir depende do dia:
   - Sábado: até 8 lugares sentados por reserva
   - Domingo: até 15 lugares sentados por reserva
@@ -1420,7 +1426,7 @@ RESERVAS
 * NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
 * Se o cliente pedir mesa próxima a outra reserva, responder: "Não conseguimos garantir proximidade das reservas 🥲. Montamos as reservas no dia, de acordo com número de reservas e antecedência dos pedidos, mas faremos o possível para atender seu pedido 😉"
 * Uma reserva por atendimento — nunca oferecer ou confirmar múltiplas reservas na mesma conversa
-* Na mensagem de confirmação, SEMPRE informar quantos lugares sentados estão garantidos e que o restante do grupo fica em volta curtindo — nunca confirmar só com o total de pessoas sem mencionar os lugares sentados
+* Na mensagem de confirmação, mencionar lugares sentados garantidos e que o restante fica em volta APENAS se o número de pessoas do grupo for MAIOR que o limite do dia. Se o grupo couber dentro do limite (igual ou menor), confirmar normalmente sem mencionar limite de lugares nem "restante em volta".
 * Se perguntarem se podem fazer reserva para 2 aniversariantes, ou mandar dois nomes, registrar apenas o nome do responsável pela reserva no campo aniversariante — não registrar dois nomes
 * Nunca oferecer ou confirmar reserva para mais de um grupo/aniversariante na mesma conversa (responder: A gente só consegue fazer uma reserva por pessoa! o outro aniversariante também precisa entrar em contato conosco e, infelizmente, não conseguimos garantir proximidade das reservas 🥲 - mas faremos o possivel!)
 
@@ -1450,6 +1456,7 @@ HORÁRIO DE RESERVAS (CRÍTICO)
 * Sábado: reservas seguradas até 15h (tolerância de 15 minutos)
 * Domingo: reservas seguradas até 14h (tolerância de 15 minutos)
 * Após esse horário: entrada por ordem de chegada
+* NUNCA aplicar a regra de um dia em outro — cada dia tem seu próprio horário
 * Nunca inventar horários diferentes
 * Nunca misturar horários de dias diferentes
 * Só falar o horário depois que a data estiver definida
@@ -1476,11 +1483,12 @@ FLUXO DE RESERVA
 
 1. Perguntar data + pessoas
 2. Confirmar data exata
-3. Explicar regras do dia
-4. Perguntar se pode seguir
-5. Pedir dados
-6. Confirmar
+3. Informar OBRIGATORIAMENTE até que horário a mesa fica garantida (conforme HORÁRIO DE RESERVAS abaixo)
+4. Perguntar se o cliente aceita essa condição ("podemos seguir assim?")
+5. SÓ APÓS o cliente confirmar que aceita o horário-limite, pedir nome e telefone
+6. Confirmar a reserva
 
+* NUNCA pedir nome ou telefone antes de informar o horário-limite e o cliente aceitar
 * Nunca pular etapas
 * Nunca misturar passos
 * Se o cliente pedir reserva para HOJE, não processar — [ESCALAR: motivo=Reserva para o mesmo dia]
@@ -1657,8 +1665,10 @@ function detectAtraso(text) {
 function detectCancelamento(text) {
   if (!text) return false;
   const t = text.toLowerCase();
+  // exige palavra completa para "cancel..." (evita falso positivo em saudações ou texto solto)
+  const regexCancel = /\bcancel(ar|amento|e|a|ei|o|ada|ado|aremos|amos)\b/;
+  if (regexCancel.test(t)) return true;
   return (
-    t.includes("cancel") ||
     t.includes("não vou mais") || t.includes("nao vou mais") ||
     t.includes("não vou conseguir") || t.includes("desmarcar") ||
     t.includes("desfazer a reserva") || t.includes("desistir da reserva") ||
@@ -2536,20 +2546,12 @@ if (await isGloballyPaused()) {
 
   await clearPendingMessages(userId);
 
-  // PONTO 6: separador explícito entre mensagens acumuladas
-   await clearPendingMessages(userId);
-
-  // PONTO 6: separador explícito entre mensagens acumuladas
   const mensagensFiltradas = pendingMessages.filter(m => !detectAtraso(m));
-if (mensagensFiltradas.length === 0) {
-  console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
-  return;
-}
-if (mensagensFiltradas.length === 0) {
-  console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
-  return;
-}
-const combinedMessage = mensagensFiltradas.join(" | ");
+  if (mensagensFiltradas.length === 0) {
+    console.log(`Todas as mensagens de ${userId} eram de atraso — ignorando`);
+    return;
+  }
+  const combinedMessage = mensagensFiltradas.join(" | ");
   const mensagemEhSoContato = isOnlyPhoneNumber(combinedMessage);
 
   console.log(`Processando ${pendingMessages.length} mensagem(ns) de ${userId}: ${combinedMessage}`);
@@ -3200,16 +3202,21 @@ if (hasMedia && !isOnlyPhoneNumber(message)) {
   if (aguardandoContato || contatoDetectado) {
     console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
     return;
-  } else {
-   if (await isHorarioComercial()) {
-      await redisSet(`echo_bot:${senderId}`, "1", 180);
-      await sendInstagramMessage(
-        senderId,
-        "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
-      );
-    }
+  }
+  // se chegou de anúncio (referral), não enviar a mensagem de "apenas texto" — ignorar silenciosamente
+  const referralMidia = messaging?.referral || messaging?.message?.referral;
+  if (referralMidia) {
+    console.log(`Mídia recebida com referral de anúncio para ${senderId} — ignorando silenciosamente`);
     return;
   }
+  if (await isHorarioComercial()) {
+    await redisSet(`echo_bot:${senderId}`, "1", 180);
+    await sendInstagramMessage(
+      senderId,
+      "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
+    );
+  }
+  return;
 }
 
     // anúncio (referral): cliente clicou num ad sem enviar texto — responder com saudação
@@ -3235,7 +3242,9 @@ if (message && message.trim().toLowerCase() === "humano") {
   return;
 }
 
-if (detectCancelamento(message)) {
+// só processa cancelamento se cliente já tem reserva confirmada — evita falsos positivos
+const temReservaParaCancelar = await redisGet(`reserva_confirmada:${senderId}`);
+if (detectCancelamento(message) && temReservaParaCancelar) {
   console.log(`Cancelamento detectado de ${senderId}`);
 
   const username = await redisGet(`ig_username:${senderId}`);
@@ -3265,18 +3274,6 @@ if (detectCancelamento(message)) {
 
     await addPendingMessage(senderId, message);
     console.log(`Mensagem de ${senderId} adicionada à fila: ${message}`);
-
-    if (await isPaused(senderId)) {
-  const ultimaIntervencao = await redisGet(`ultima_intervencao:${senderId}`);
-
-  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
-    await redisDel(`paused:${senderId}`);
-    console.log(`Conversa com ${senderId} auto-reativada após pausa antiga`);
-  } else {
-    console.log(`Conversa com ${senderId} pausada — ignorando`);
-    return;
-  }
-}
 
     // Se conversa foi encerrada por humano e pausa expirou: cliente reabre com nova mensagem
 

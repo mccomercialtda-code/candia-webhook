@@ -1305,6 +1305,7 @@ JOGOS / TRANSMISSÕES
 MÚSICA AO VIVO
 
 * Tem música ao vivo TODOS os dias que o bar funciona (terça a domingo)
+* Se o cliente perguntar até que horas vai a música ao vivo - de terça a sabado até aproximadamente 22hs e domingo até aproxidamente 18hs
 * Sexta a domingo: samba
 * Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento

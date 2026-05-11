@@ -1512,11 +1512,14 @@ LOCAIS DE RESERVA
 * Aliases:
   - Fundos: "quintal", "lá atrás", "la atras", "perto da parede de desenhos"
   - Corredor: "lateral", "varanda"
-  - Frente: "bancos da frente", "perto da entrada", "calçada"
+  - Frente: "bancos da frente", "perto da entrada", "calçada", "passeio", "área externa"
 * Se disponível (dentro do limite): confirmar o local
 * Se indisponível (acima do limite): "Faremos o possível para atender seu pedido 😉" — nunca prometer
 * Se perguntarem sobre cobertura: Fundos = coberto, Corredor = coberto, Frente = descoberto
 * Se perguntarem sobre fumar: Fundos = não pode, Corredor = não pode, Frente = pode
+* Quando o cliente mencionar preferência de local (fundos, quintal, corredor, lateral, varanda, frente, calçada, passeio, área externa), OBRIGATORIAMENTE preencher o campo local= no bloco [RESERVA:] com o nome padronizado: Fundos, Corredor ou Frente
+* NUNCA colocar o local apenas na observação — o campo local= deve sempre ser preenchido quando há preferência mencionada
+* Se não houver preferência, deixar local= vazio
 * Incluir no bloco [RESERVA]: local=NOME_DO_LOCAL (ex: local=Fundos)
 
 MÚSICOS
@@ -1724,7 +1727,19 @@ function extractReservation(text) {
   if (!obj.total_esperado && obj.pessoas) obj.total_esperado = obj.pessoas;
   if (!obj.total_esperado && obj.total) obj.total_esperado = obj.total;
   if (!obj.lugares && obj.total_esperado) obj.lugares = "8";
-  if (!obj.local) obj.local = "";
+  // normaliza local: aceita aliases e variações de capitalização
+  if (obj.local) {
+    const localLower = obj.local.toLowerCase().trim();
+    const aliasFundos = ["fundos", "fundo", "quintal", "lá atrás", "la atras", "atras", "atrás", "parede de desenhos"];
+    const aliasCorredor = ["corredor", "lateral", "varanda"];
+    const aliasFrente = ["frente", "bancos da frente", "perto da entrada", "entrada", "calçada", "calcada", "passeio", "área externa", "area externa", "externa"];
+    if (aliasFundos.some(a => localLower.includes(a))) obj.local = "Fundos";
+    else if (aliasCorredor.some(a => localLower.includes(a))) obj.local = "Corredor";
+    else if (aliasFrente.some(a => localLower.includes(a))) obj.local = "Frente";
+    else obj.local = "";
+  } else {
+    obj.local = "";
+  }
   return obj;
 }
 
@@ -2624,9 +2639,9 @@ const querAlterarReserva =
       if (disp.tipo === "esgotado") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
       } else if (disp.tipo === "descoberto") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): apenas área descoberta disponível (${disp.vagasDescoberto} vagas restantes).\n`;
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, porém apenas área descoberta (calçada, ao ar livre) — área coberta esgotada. (${disp.vagasDescoberto} vagas restantes).\n`;
       } else if (disp.tipo === "coberto") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível na área coberta (${disp.vagasCoberto} vagas restantes).\n`;
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível (${disp.vagasCoberto} vagas restantes).\n`;
       } else {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, sem limite de reservas.\n`;
       }
@@ -2887,6 +2902,26 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     reservation.observacao = reservation.observacao
       ? `${reservation.observacao} | Área externa (descoberta)`
       : "Área externa (descoberta)";
+  }
+
+  // verifica disponibilidade do local solicitado (Fundos/Corredor/Frente)
+  if (reservation.local && reservation.local.trim() && reservation.local !== "Sem preferência") {
+    const localSolicitado = reservation.local;
+    const dispLocal = await verificarDisponibilidadeLocal(reservation.data, localSolicitado);
+    if (!dispLocal.disponivel) {
+      console.log(`Local ${localSolicitado} esgotado para ${reservation.data} — alterando para Sem preferência`);
+      reservation.local = "Sem preferência";
+      reservation.observacao = reservation.observacao
+        ? `${reservation.observacao} | Cliente pediu ${localSolicitado} (esgotado)`
+        : `Cliente pediu ${localSolicitado} (esgotado)`;
+
+      const msgLocalIndisponivel =
+        `Conseguimos confirmar a reserva, mas não foi possível garantir o local ${localSolicitado} que você pediu — ele já está com a lotação fechada pra essa data 🥲 Vamos fazer o possível pra te acomodar bem no dia 😊`;
+
+      await redisSet(`echo_bot:${userId}`, "1", 180);
+      await sendInstagramMessage(userId, msgLocalIndisponivel);
+      await salvarUltimaRespostaBot(userId, msgLocalIndisponivel);
+    }
   }
 
   const salvou = await salvarReservaNaNotion(reservation, userId);

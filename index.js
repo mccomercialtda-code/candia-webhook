@@ -1290,11 +1290,11 @@ ENDEREÇO
 
 FUNCIONAMENTO
 
-* Horários de abertura:
-  - Terça a quinta: 16h
-  - Sexta: 11h
-  - Sábado: 12h
-  - Domingo: 12h
+* Horários de funcionamento:
+  - Terça a quinta: 16h às 00h
+  - Sexta: 11h às 01h
+  - Sábado: 12h às 00h
+  - Domingo: 12h às 21h
   - Segunda: fechado
 * NUNCA dizer que "a música vai até o fechamento" ou "até fechar". A música ao vivo tem horário próprio (ver seção MÚSICA AO VIVO). Se o cliente perguntar até que horas vai a música, responder com o horário da música, NÃO com o horário de fechamento do bar.
 * O Candiá é pet friendly — animais de estimação são bem-vindos

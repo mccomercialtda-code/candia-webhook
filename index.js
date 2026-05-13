@@ -1140,15 +1140,54 @@ async function sincronizarReservasClientes() {
     });
     const data = await res.json();
     const keys = data.result || [];
+
+    // chamada Notion com retry no caso de receber HTML (rate limit)
+    async function buscarPageComRetry(userId) {
+      const callNotion = async () => {
+        const notionRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${NOTION_TOKEN}`,
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+          },
+          body: JSON.stringify({
+            filter: { property: "Instagram ID", rich_text: { equals: userId } },
+            sorts: [{ property: "Data", direction: "descending" }],
+            page_size: 1
+          })
+        });
+        const json = await notionRes.json();
+        if (!json.results || json.results.length === 0) return null;
+        return json.results[0].id;
+      };
+      try {
+        return await callNotion();
+      } catch (err) {
+        if (err.message && err.message.includes("Unexpected token '<'")) {
+          console.log("Rate limit Notion — aguardando 10s antes de retry");
+          await sleep(10000);
+          try {
+            return await callNotion();
+          } catch (retryErr) {
+            console.error(`Retry sincronização falhou para ${userId}:`, retryErr.message);
+            return null;
+          }
+        }
+        console.error(`Erro Notion na sincronização para ${userId}:`, err.message);
+        return null;
+      }
+    }
+
     for (const key of keys) {
       const userId = key.replace("ig_username:", "");
       if (await redisGet(`reserva_confirmada:${userId}`)) continue;
-     const pageId = await buscarPageIdPorInstagram(userId);
+      const pageId = await buscarPageComRetry(userId);
       if (pageId) {
         await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
         console.log(`Flag reserva sincronizada para ${userId}`);
       }
-      await sleep(3000); // evita rate limit do Notion
+      await sleep(8000); // evita rate limit do Notion
     }
   } catch (err) {
     console.error("Erro ao sincronizar reservas:", err);
@@ -2539,6 +2578,55 @@ async function sendInstagramMessage(userId, text) {
   console.log("Resposta Graph API:", JSON.stringify(igData));
 }
 
+// escalada silenciosa: notifica owner, marca como escalada e limpa estado
+async function escalarConversa(userId, motivo) {
+  const username = await redisGet(`ig_username:${userId}`);
+  await notifyOwner(
+    `⚠️ Escalonar conversa com ${userId}${username ? ` (@${username})` : ""}\nMotivo: ${motivo}\nUse: /reativar ${userId}`
+  );
+  await marcarConversaEscalada(userId, motivo);
+  await clearPendingMessages(userId);
+  await setDebounceToken(userId, `cancelled_${Date.now()}`);
+  await cancelarFollowUp(userId);
+  console.log(`Conversa ${userId} marcada como escalada (silenciosa). Motivo: ${motivo}`);
+}
+
+// atualiza o campo Local da última reserva do cliente no Notion (sem criar nova entrada)
+async function atualizarLocalReservaNoNotion(userId, novoLocal) {
+  try {
+    const pageId = await buscarPageIdPorInstagram(userId);
+    if (!pageId) {
+      console.log(`Sem pageId no Notion para ${userId} — não foi possível atualizar local`);
+      return false;
+    }
+    const props = {};
+    if (novoLocal && novoLocal !== "Sem preferência") {
+      props["Local"] = { select: { name: novoLocal } };
+    } else {
+      props["Local"] = { select: null };
+    }
+    const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+      method: "PATCH",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({ properties: props })
+    });
+    const result = await res.json();
+    if (result.object === "error") {
+      console.error(`Erro ao atualizar local no Notion para ${userId}:`, JSON.stringify(result));
+      return false;
+    }
+    console.log(`Local atualizado no Notion para ${userId} → ${novoLocal}`);
+    return true;
+  } catch (err) {
+    console.error(`Exceção ao atualizar local no Notion para ${userId}:`, err);
+    return false;
+  }
+}
+
 // ─── Processamento de mensagens ───────────────────────────────────────────────
 
 async function processMessages(userId, myToken) {
@@ -2947,6 +3035,19 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     }
   }
 
+  // se o cliente já tem reserva confirmada, NÃO cria nova entrada no Notion — apenas atualiza o local
+  const jaConfirmadaAntes = await redisGet(`reserva_confirmada:${userId}`);
+  if (jaConfirmadaAntes) {
+    console.log(`Reserva já confirmada para ${userId} — ignorando segundo bloco [RESERVA:]`);
+    if (reservation.local && reservation.local.trim() && reservation.local !== "Sem preferência") {
+      const ok = await atualizarLocalReservaNoNotion(userId, reservation.local);
+      if (!ok) console.log(`Não foi possível atualizar local da reserva existente para ${userId}`);
+    }
+    await clearPendingMessages(userId);
+    await redisDel(`aguardando_contato:${userId}`);
+    await redisDel(`contato_detectado:${userId}`);
+    await cancelarFollowUp(userId);
+  } else {
   const salvou = await salvarReservaNaNotion(reservation, userId);
 
   if (salvou) {
@@ -2970,6 +3071,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     })();
   } else {
     console.log(`⚠️ Falha ao salvar reserva para ${userId} — owner notificado`);
+  }
   }
 }
 
@@ -3267,13 +3369,8 @@ if (hasMedia && !isOnlyPhoneNumber(message)) {
     console.log(`Mídia recebida com referral de anúncio para ${senderId} — ignorando silenciosamente`);
     return;
   }
-  if (await isHorarioComercial()) {
-    await redisSet(`echo_bot:${senderId}`, "1", 180);
-    await sendInstagramMessage(
-      senderId,
-      "Oi! Por aqui atendemos apenas por mensagem de texto. Pode me escrever o que precisar que respondo rapidinho!"
-    );
-  }
+  // Mídia sem texto — escalar silenciosamente sem responder ao cliente
+  await escalarConversa(senderId, "Cliente enviou mídia sem texto");
   return;
 }
 

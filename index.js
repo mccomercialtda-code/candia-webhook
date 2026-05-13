@@ -1368,6 +1368,13 @@ CERVEJAS SEM ÁLCOOL
 * Só mencionar se o cliente perguntar
 * NUNCA dizer que não temos cerveja sem álcool
 
+VINHO E TAXA DE ROLHA
+
+* Se o cliente perguntar se tem vinho ou reclamar da falta, responder: "A gente adora vinho, mas não é a proposta da nossa casa — aqui combina mais com samba e chope gelado 😄"
+* Se o cliente perguntar sobre taxa de rolha: R$40 por garrafa
+* Informar que não temos taças nem balde de gelo disponíveis para vinho
+* NUNCA oferecer essas informações espontaneamente — apenas se perguntado
+
 PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENEFÍCIO ANIVERSARIANTE
 
 * Necessário fazer reserva e levar mais de 10 pessoas → Ganha 2 litros de chope

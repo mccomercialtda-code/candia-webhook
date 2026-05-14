@@ -1531,6 +1531,10 @@ SÁBADO (OBRIGATÓRIO)
 
 FLUXO DE RESERVA
 
+* ANTES de qualquer passo do fluxo de reserva, SEMPRE verificar a disponibilidade da data informada pelo cliente — se estiver esgotada ou com briefing de encerramento, informar imediatamente sem coletar dados
+* NUNCA confirmar reserva para data esgotada, independente do briefing estar presente ou não
+* Se o cliente mencionar uma data que está esgotada, responder com o briefing da data se disponível, ou informar que não há vagas disponíveis
+
 1. Perguntar data + pessoas
 2. Confirmar data exata
 3. Informar OBRIGATORIAMENTE até que horário a mesa fica garantida (conforme HORÁRIO DE RESERVAS abaixo)
@@ -1853,13 +1857,50 @@ function extractExplicitDates(text) {
     return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${parts[2]}`;
   });
 
-  const diaNumRegex = /\b(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)\s+dia\s+(\d{1,2})\b/gi;
+  // alternação ampla de dia-da-semana incluindo typos comuns
+  const diaSemanaAlt = "segunda|segundaa|terça|terca|terça-feira|terca-feira|quarta|quartaa|quinta|quintaa|sexta|sextaa|sextra|sex|sábado|sabado|sábadoo|sabdo|sabao|sabad|sab|domingo|domng|domigo|domig|dom";
+
+  // "<diasemana> dia <num>" (ex.: "sábado dia 16")
+  const diaNumRegex = new RegExp(`\\b(${diaSemanaAlt})\\s+dia\\s+(\\d{1,2})\\b`, "gi");
   let match;
   while ((match = diaNumRegex.exec(text)) !== null) {
     const diaNum = parseInt(match[2]);
     const mesAtual = now.getMonth() + 1;
     const anoAtual = now.getFullYear();
     results.push(`${String(diaNum).padStart(2,"0")}/${String(mesAtual).padStart(2,"0")}/${anoAtual}`);
+  }
+
+  // mapa de meses por nome (com variações)
+  const mesesMap = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, "maio": 5,
+    "junho": 6, "julho": 7, "agosto": 8, "setembro": 9, "outubro": 10,
+    "novembro": 11, "dezembro": 12
+  };
+  const mesesAlt = Object.keys(mesesMap).join("|");
+
+  // "dia 16" / "dia 16 de maio" / "no dia 16"
+  const diaSoltoRegex = new RegExp(`\\bdia\\s+(\\d{1,2})(?:\\s+de\\s+(${mesesAlt}))?\\b`, "gi");
+  while ((match = diaSoltoRegex.exec(text)) !== null) {
+    const diaNum = parseInt(match[1]);
+    const mes = match[2] ? mesesMap[match[2].toLowerCase()] : (now.getMonth() + 1);
+    let ano = now.getFullYear();
+    // se o mês informado já passou neste ano, assume ano seguinte
+    if (match[2] && (mes < now.getMonth() + 1 || (mes === now.getMonth() + 1 && diaNum < now.getDate()))) {
+      ano += 1;
+    }
+    results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
+  }
+
+  // "16 de maio" / "16 de junho de 2026"
+  const numMesRegex = new RegExp(`\\b(\\d{1,2})\\s+de\\s+(${mesesAlt})(?:\\s+de\\s+(\\d{4}))?\\b`, "gi");
+  while ((match = numMesRegex.exec(text)) !== null) {
+    const diaNum = parseInt(match[1]);
+    const mes = mesesMap[match[2].toLowerCase()];
+    let ano = match[3] ? parseInt(match[3]) : now.getFullYear();
+    if (!match[3] && (mes < now.getMonth() + 1 || (mes === now.getMonth() + 1 && diaNum < now.getDate()))) {
+      ano += 1;
+    }
+    results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
   }
 
   // extrai "hoje" e "amanhã" — usar indexOf em vez de \b para evitar problema com acentos
@@ -1873,18 +1914,36 @@ function extractExplicitDates(text) {
     results.push(dateToBR(amanha));
   }
 
-  // extrai "esse sábado", "essa sexta", "próximo domingo" etc sem número
-  const diaSemanaRegex = /(esse|essa|próximo|proxima|próxima|proxima)\s+(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)/gi;
-  while ((match = diaSemanaRegex.exec(text)) !== null) {
-    const data = proximoDiaSemana(match[2]);
-    if (data) results.push(data);
+  // mapa de aliases de dia-da-semana (typos -> nome padrão)
+  const diaSemanaCanon = {
+    "segunda": "segunda", "segundaa": "segunda",
+    "terça": "terça", "terca": "terça", "terça-feira": "terça", "terca-feira": "terça",
+    "quarta": "quarta", "quartaa": "quarta",
+    "quinta": "quinta", "quintaa": "quinta",
+    "sexta": "sexta", "sextaa": "sexta", "sextra": "sexta", "sex": "sexta",
+    "sábado": "sábado", "sabado": "sábado", "sábadoo": "sábado", "sabdo": "sábado",
+    "sabao": "sábado", "sabad": "sábado", "sab": "sábado",
+    "domingo": "domingo", "domng": "domingo", "domigo": "domingo", "domig": "domingo", "dom": "domingo"
+  };
+
+  // "esse sábado", "essa sexta", "próximo domingo", "neste sábado" etc
+  const diaSemanaPrefRegex = new RegExp(`(esse|essa|este|esta|neste|nesta|próximo|proxima|próxima|proxima)\\s+(${diaSemanaAlt})`, "gi");
+  while ((match = diaSemanaPrefRegex.exec(text)) !== null) {
+    const canon = diaSemanaCanon[match[2].toLowerCase()];
+    if (canon) {
+      const data = proximoDiaSemana(canon);
+      if (data) results.push(data);
+    }
   }
 
-  // extrai dia da semana sozinho (sem prefixo) em qualquer posição do texto
-  const diaIsoladoRegex = /(^|\s)(segunda|terça|terca|quarta|quinta|sexta|sábado|sabado|domingo)($|\s|[!?,.])/gi;
+  // dia-da-semana isolado em qualquer posição do texto
+  const diaIsoladoRegex = new RegExp(`(^|\\s)(${diaSemanaAlt})($|\\s|[!?,.])`, "gi");
   while ((match = diaIsoladoRegex.exec(text)) !== null) {
-    const data = proximoDiaSemana(match[2]);
-    if (data) results.push(data);
+    const canon = diaSemanaCanon[match[2].toLowerCase()];
+    if (canon) {
+      const data = proximoDiaSemana(canon);
+      if (data) results.push(data);
+    }
   }
 
   return [...new Set(results)];

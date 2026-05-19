@@ -1264,6 +1264,12 @@ IDENTIDADE E TOM
 * Nunca mencionar "dono" ou "proprietário"
 * Atendimento apenas via Instagram ou presencial
 
+ATENDIMENTO E CONTATO
+
+* O cliente já está no Instagram Direct — NUNCA dizer "entre em contato pelo Instagram", "manda mensagem no @ocandiabar" ou qualquer variação que trate o Instagram como canal externo
+* Para informações que o bot não tem acesso (fotos, mídias, cardápio completo), a única exceção permitida é direcionar para os destaques do próprio perfil: "você pode ver aqui nos destaques do nosso perfil 😊" — NUNCA "acesse o @ocandiabar" ou "vá no nosso Instagram"
+* Para qualquer outra informação que o bot não tenha acesso e não seja cardápio/programação/fotos, escalar silenciosamente sem dizer que não tem a informação
+
 SAUDAÇÃO
 
 * Se o cliente disser "tudo bem?", responder:
@@ -1357,7 +1363,7 @@ MÚSICA AO VIVO
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
 * Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder qualquer pergunta sobre música, artista, horário, estilo ou Instagram do artista — mesmo que a pergunta seja indireta
 * Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ da programação — nunca redirecione para @ocandiabar nesse caso
-* Só redirecionar para @ocandiabar se NÃO houver PROGRAMAÇÃO DO DIA no prompt — nesse caso, responder: "A programação completa está nos destaques do nosso Instagram @ocandiabar, no tópico 'Agenda' 😊"
+* Só direcionar para os destaques se NÃO houver PROGRAMAÇÃO DO DIA no prompt — nesse caso, responder: "A programação completa está aqui nos destaques do nosso perfil, no tópico 'Agenda' 😊"
 * NUNCA dizer apenas "acompanhe pelo Instagram" sem especificar onde encontrar
 * Nunca inventar nomes de artistas ou horários
 * NUNCA dizer "deixa eu checar", "vou verificar", "em breve retorno" sobre programação — se houver PROGRAMAÇÃO DO DIA no prompt, responda imediatamente com os dados
@@ -1396,7 +1402,7 @@ VALE ALIMENTAÇÃO / VALE REFEIÇÃO
 * NUNCA confirmar VR/VA/Sodexo/Ticket para outros dias da semana, para jantar de sexta ou para qualquer outro período — somente almoço de sexta-feira
 
 CARDÁPIO
-* NUNCA informar preços de itens individuais do cardápio (cervejas, drinks, comidas, porções) — para preços, SEMPRE direcionar: "Você pode ver nosso cardápio nos destaques aqui no Instagram @ocandiabar 😊"
+* NUNCA informar preços de itens individuais do cardápio (cervejas, drinks, comidas, porções) — para preços, SEMPRE direcionar: "Você pode ver nosso cardápio aqui nos destaques do nosso perfil 😊"
 * NUNCA listar valores de cerveja, chope, drinks, comida nem dar faixa de preços
 * Exceção única: feijoada promocional de sábado (R$20 até 14h) pode ser informada porque é uma promoção específica e divulgada
 
@@ -1472,7 +1478,11 @@ RESERVAS
 * Só mencionar o limite de lugares depois que a data estiver definida
 * Só mencionar o limite de lugares sentados se o número de pessoas informado pelo cliente for MAIOR que o limite do dia — se for igual ou menor, não mencionar
 * Se o número de pessoas informado pelo cliente for IGUAL OU MENOR que o limite do dia, confirmar normalmente SEM mencionar quantidade de lugares sentados, SEM mencionar limite, SEM dizer "conseguimos garantir X lugares sentados"
-* Só mencionar limite e lugares sentados se o grupo for MAIOR que o limite do dia
+* Só mencionar limite e lugares sentados se o grupo for ESTRITAMENTE MAIOR que o limite do dia
+* Exemplos:
+  - Sexta, limite 12, grupo de 10 → confirmar sem mencionar limite ✅
+  - Sexta, limite 12, grupo de 15 → informar que garante 12 sentados, restante em volta ✅
+  - Domingo, limite 15, grupo de 15 → confirmar sem mencionar limite ✅
 * Nunca dizer que não pode vir por causa do tamanho do grupo
 * Se alguém pedir reserva para outras pessoas do grupo, informar que cada pessoa precisa entrar em contato separadamente para fazer sua própria reserva
 * NUNCA prometer mesas próximas ou juntas — não temos como garantir isso
@@ -1604,6 +1614,7 @@ Não escalar. Não prolongar conversa.
 
 EVENTOS PRIVADOS / FECHAMENTO DO BAR
 
+* NUNCA oferecer espontaneamente esse formato — mesmo para grupos grandes, aniversários grandes ou eventos corporativos. Só responder quando o cliente perguntar diretamente sobre fechar o bar ou evento privado.
 * Se o cliente perguntar sobre fechar o bar para eventos privados (aniversários, confraternizações, eventos corporativos, open bar, etc), responder:
   "Podemos sim avaliar! Trabalhamos com formato open bar e food, com pagamento antecipado 😊
   Para eu passar para a equipe responsável, preciso de algumas informações:
@@ -1659,8 +1670,10 @@ MENSAGENS DO ATENDENTE
 
 INTELIGÊNCIA ARTIFICIAL
 
-* Se o cliente perguntar se está falando com IA ou atendimento automático, confirmar de forma leve e natural: "Sou um assistente virtual do Candiá 😊 Para falar com a equipe diretamente, é só digitar 'humano'!" — sem drama, sem desculpas
-* Após confirmar que é IA, escalar com [ESCALAR: motivo=Cliente perguntou sobre IA]
+* O bot é parte do atendimento do Candiá — nunca se referir à "equipe" como algo externo ou separado do atendimento
+* Se o cliente perguntar se está falando com a equipe ou com um humano, confirmar de forma leve que é um assistente virtual: "Sou um assistente virtual do Candiá 😊 Para falar com alguém da equipe diretamente, é só digitar 'humano'!" e escalar com [ESCALAR: motivo=Cliente perguntou sobre IA]
+* NUNCA dizer "vou repassar para a equipe" em situações de atendimento normal — apenas em casos de escalada real
+* NUNCA tratar a equipe como terceiros — o bot faz parte do atendimento
 
 FERIADOS E DATAS ESPECIAIS
 
@@ -2327,69 +2340,23 @@ if (cmd.startsWith("/data ")) {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 512,
-          system: `Você vai extrair dados de uma reserva a partir do histórico de conversa de um cliente do Candiá Bar.
+          system: `Você vai extrair, do histórico de conversa de um cliente do Candiá Bar, todos os dados de reserva que estiverem disponíveis.
 
-Seu objetivo é identificar se já existem dados suficientes para registrar a reserva no sistema.
+SEMPRE retorne JSON com TODOS os campos abaixo. Se um campo não estiver presente no histórico, retorne string vazia "" (ou 0 para números).
 
-Considere como suficientes os seguintes campos:
-- data
-- aniversariante
-- contato
-- total_esperado
+Campos:
+- data: "DD/MM/AAAA" (converter 2 dígitos de ano para 20XX)
+- dia: nome do dia da semana em maiúsculas (SEGUNDA, TERÇA, QUARTA, QUINTA, SEXTA, SÁBADO, DOMINGO) — se houver data e o dia não estiver explícito, derive da data
+- aniversariante: nome completo
+- contato: telefone apenas dígitos (ex.: "31984717364")
+- total_esperado: número total de pessoas do grupo
+- lugares: número de lugares (se só houver um número de pessoas, repetir total_esperado)
+- observacao: observações pontuais (string, vazia se nada)
+- local: Fundos, Corredor ou Frente (string vazia se sem preferência)
 
-Campos desejáveis, mas que podem ser inferidos se necessário:
-- dia
-- lugares
-- observacao
+NÃO use o campo "encontrou". Sempre retorne o JSON com os campos preenchidos onde possível.
 
-REGRAS IMPORTANTES:
-
-1. Aceite datas em formatos como:
-- DD/MM/AAAA
-- DD/MM/AA
-- DD-MM-AAAA
-- DD-MM-AA
-
-Se a data vier com ano de 2 dígitos, converta para 4 dígitos assumindo 20XX.
-Exemplo:
-15/05/26 -> 15/05/2026
-
-2. Se o dia da semana não estiver escrito, calcule a partir da data e retorne em maiúsculas.
-Exemplo:
-15/05/2026 -> SEXTA
-
-3. Se houver apenas um número de pessoas no texto, use esse valor tanto para:
-- lugares
-- total_esperado
-
-Exemplo:
-“20 convidados” -> lugares=20 e total_esperado=20
-
-4. Interprete expressões equivalentes como quantidade de pessoas:
-- convidados
-- pessoas
-- previsão de convidados
-- total de pessoas
-
-5. Interprete telefone mesmo que venha com espaços, parênteses ou hífen.
-Retorne apenas números.
-Exemplo:
-31 98471-7364 -> 31984717364
-
-6. “Nome completo” ou nome informado junto com outros dados deve ser tratado como aniversariante.
-
-7. Se observação não existir de forma clara, retorne observacao como string vazia.
-
-8. Só retorne encontrou=false se realmente faltarem dados essenciais para registrar a reserva.
-Se houver data + nome + telefone + quantidade de pessoas, considere que encontrou=true.
-
-9. Responda apenas em JSON válido, sem explicações, sem markdown.
-
-Formato da resposta:
-{"encontrou":true,"data":"DD/MM/AAAA","dia":"DIASEMANA","aniversariante":"NOME","contato":"SOMENTE NUMEROS","lugares":NUMERO,"total_esperado":NUMERO,"observacao":""}
-
-Se realmente não houver dados suficientes, responda:
-{"encontrou":false}`,
+Responda APENAS o JSON válido, sem markdown.`,
           messages: [
             { role: "user", content: "Histórico da conversa:\n" + hist.map(h => h.role + ": " + h.content).join("\n") }
           ]
@@ -2401,30 +2368,47 @@ Se realmente não houver dados suficientes, responda:
       const clean = rawText.replace(/```json|```/g, "").trim();
       const dados = JSON.parse(clean);
 
-      if (!dados.encontrou) {
-        await notifyOwner(`⚠️ Não encontrei dados suficientes de reserva no histórico de ${userId}${igUsername ? ` (@${igUsername})` : ""}.
-Verifique a conversa manualmente.`);
-        return;
+      // deriva dia se ausente mas houver data
+      if (dados.data && !dados.dia) {
+        try { dados.dia = getDiaSemana(dados.data).toUpperCase(); } catch {}
+      }
+      // se total_esperado vier mas lugares não, usa total
+      if (dados.total_esperado && !dados.lugares) dados.lugares = dados.total_esperado;
+
+      const camposObrigatorios = ["aniversariante", "data", "total_esperado", "contato"];
+      const labelsCampo = {
+        aniversariante: "nome completo do aniversariante",
+        data: "data da reserva (DD/MM/AAAA)",
+        total_esperado: "número total de pessoas",
+        contato: "telefone de contato"
+      };
+      const faltam = camposObrigatorios.filter(c => !dados[c] || String(dados[c]).trim() === "" || dados[c] === 0);
+
+      function montarResumo() {
+        const linhas = [`🔍 Dados encontrados para ${userId}${igUsername ? ` (@${igUsername})` : ""}:`];
+        const renderField = (label, valor) =>
+          (valor && String(valor).trim() !== "" && valor !== 0)
+            ? `✅ ${label}: ${valor}`
+            : `❌ ${label} não encontrado`;
+        linhas.push(renderField("Nome", dados.aniversariante));
+        linhas.push(renderField("Data", dados.data));
+        linhas.push(renderField("Pessoas", dados.total_esperado));
+        linhas.push(renderField("Telefone", dados.contato));
+        return linhas.join("\n");
       }
 
-      const salvou = await salvarReservaNaNotion(dados, userId);
-      if (salvou) {
-        await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
-        await notifyOwner(
-          `✅ Reserva gravada no Notion!
-` +
-          `Cliente: ${userId}${igUsername ? ` (@${igUsername})` : ""}
-` +
-          `Nome: ${dados.aniversariante}
-` +
-          `Data: ${dados.data} (${dados.dia})
-` +
-          `Lugares: ${dados.lugares} | Total: ${dados.total_esperado}
-` +
-          `Contato: ${dados.contato}
-` +
-          `Obs: ${dados.observacao || "—"}`
-        );
+      if (faltam.length === 0) {
+        const salvou = await salvarReservaNaNotion(dados, userId);
+        if (salvou) {
+          await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
+          await notifyOwner(
+            `✅ Reserva gravada!\n📋 ${dados.aniversariante} | ${dados.data} | ${dados.total_esperado} pessoas | ${dados.contato}`
+          );
+        }
+      } else {
+        const state = { userId, igUsername: igUsername || "", dados, faltam };
+        await redisSet("telegram:aguardando_reserva", JSON.stringify(state), 1800);
+        await notifyOwner(`${montarResumo()}\n\nQual o ${labelsCampo[faltam[0]]}?`);
       }
     } catch (err) {
       await notifyOwner(`⚠️ Erro ao extrair dados de reserva: ${err.message}`);
@@ -2604,6 +2588,80 @@ async function processarRespostaDia(dataISO, texto) {
   }
   await setRegraDia(dataISO, { briefing });
   await notifyOwner(`✅ Briefing salvo para ${formatDateBR(dataISO)}:\n\n"${briefing}"`);
+}
+
+// Recebe respostas do atendente para preencher campos faltantes da /reservar interativa
+async function processarRespostaReserva(stateRaw, texto) {
+  const labelsCampo = {
+    aniversariante: "nome completo do aniversariante",
+    data: "data da reserva (DD/MM/AAAA)",
+    total_esperado: "número total de pessoas",
+    contato: "telefone de contato"
+  };
+
+  let state;
+  try { state = JSON.parse(stateRaw); }
+  catch {
+    await redisDel("telegram:aguardando_reserva");
+    await notifyOwner("⚠️ Estado de reserva corrompido. Use /reservar novamente.");
+    return;
+  }
+
+  const campo = state.faltam[0];
+  const valor = texto.trim();
+  if (!valor) {
+    await notifyOwner(`⚠️ Resposta vazia. Qual o ${labelsCampo[campo]}?`);
+    return;
+  }
+
+  if (campo === "contato") {
+    state.dados.contato = valor.replace(/\D/g, "");
+  } else if (campo === "data") {
+    const m = valor.match(/(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{2,4}))?/);
+    if (!m) {
+      await notifyOwner(`⚠️ Data inválida. Envie no formato DD/MM ou DD/MM/AAAA.`);
+      return;
+    }
+    const dia = m[1].padStart(2, "0");
+    const mes = m[2].padStart(2, "0");
+    let ano = m[3] || String(new Date().getFullYear());
+    if (ano.length === 2) ano = "20" + ano;
+    state.dados.data = `${dia}/${mes}/${ano}`;
+    try { state.dados.dia = getDiaSemana(state.dados.data).toUpperCase(); } catch {}
+  } else if (campo === "total_esperado") {
+    const num = parseInt(valor.replace(/\D/g, ""));
+    if (!num || isNaN(num)) {
+      await notifyOwner(`⚠️ Número inválido. Quantas pessoas?`);
+      return;
+    }
+    state.dados.total_esperado = num;
+    if (!state.dados.lugares) state.dados.lugares = num;
+  } else {
+    state.dados[campo] = valor;
+  }
+
+  state.faltam.shift();
+
+  if (state.faltam.length > 0) {
+    await redisSet("telegram:aguardando_reserva", JSON.stringify(state), 1800);
+    await notifyOwner(`Qual o ${labelsCampo[state.faltam[0]]}?`);
+    return;
+  }
+
+  // todos os campos preenchidos — grava no Notion
+  await redisDel("telegram:aguardando_reserva");
+  const salvou = await salvarReservaNaNotion(state.dados, state.userId);
+  if (salvou) {
+    await redisSet(`reserva_confirmada:${state.userId}`, "1", 86400 * 30);
+    const contatoFmt = state.dados.contato.length === 11
+      ? `(${state.dados.contato.slice(0,2)}) ${state.dados.contato.slice(2,7)}-${state.dados.contato.slice(7)}`
+      : state.dados.contato;
+    await notifyOwner(
+      `✅ Reserva gravada!\n📋 ${state.dados.aniversariante} | ${state.dados.data} | ${state.dados.total_esperado} pessoas | ${contatoFmt}`
+    );
+  } else {
+    await notifyOwner(`⚠️ Falha ao gravar reserva para ${state.userId}.`);
+  }
 }
 
 // ─── Instagram ────────────────────────────────────────────────────────────────
@@ -3219,6 +3277,13 @@ app.post("/telegram", async (req, res) => {
     if (aguardandoDia && !text.startsWith("/")) {
       await redisDel("telegram:aguardando_dia");
       await processarRespostaDia(aguardandoDia, text);
+      return;
+    }
+
+    // verifica se está aguardando dado faltante da /reservar interativa
+    const aguardandoReserva = await redisGet("telegram:aguardando_reserva");
+    if (aguardandoReserva && !text.startsWith("/")) {
+      await processarRespostaReserva(aguardandoReserva, text);
       return;
     }
 

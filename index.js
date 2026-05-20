@@ -2344,6 +2344,10 @@ if (cmd.startsWith("/data ")) {
     await notifyOwner(`🔍 Buscando dados de reserva no histórico de ${userId}${igUsername ? ` (@${igUsername})` : ""}...`);
 
     try {
+      const hojeRef = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+      const anoAtual = hojeRef.getFullYear();
+      const dataAtualFmt = `${String(hojeRef.getDate()).padStart(2,"0")}/${String(hojeRef.getMonth()+1).padStart(2,"0")}/${anoAtual}`;
+
       const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -2356,11 +2360,13 @@ if (cmd.startsWith("/data ")) {
           max_tokens: 512,
           system: `Você vai extrair, do histórico de conversa de um cliente do Candiá Bar, todos os dados de reserva que estiverem disponíveis.
 
+DATA DE REFERÊNCIA: hoje é ${dataAtualFmt} (horário de Brasília). Ao interpretar datas sem ano explícito, sempre usar ${anoAtual}. Se o mês mencionado já passou neste ano (mês menor que o atual), usar ${anoAtual + 1}. NUNCA usar ano de anos anteriores nem fixar manualmente um ano (ex.: 2025) — sempre derivar com base na DATA DE REFERÊNCIA.
+
 SEMPRE retorne JSON com TODOS os campos abaixo. Se um campo não estiver presente no histórico, retorne string vazia "" (ou 0 para números).
 
 Campos:
-- data: "DD/MM/AAAA" (converter 2 dígitos de ano para 20XX)
-- dia: nome do dia da semana em maiúsculas (SEGUNDA, TERÇA, QUARTA, QUINTA, SEXTA, SÁBADO, DOMINGO) — se houver data e o dia não estiver explícito, derive da data
+- data: "DD/MM/AAAA" (converter 2 dígitos de ano para 20XX; sem ano explícito usar ${anoAtual} ou ${anoAtual + 1} conforme regra acima)
+- dia: nome do dia da semana em maiúsculas (SEGUNDA, TERÇA, QUARTA, QUINTA, SEXTA, SÁBADO, DOMINGO) — se houver data e o dia não estiver explícito, derive da data já com o ano correto
 - aniversariante: nome completo
 - contato: telefone apenas dígitos (ex.: "31984717364")
 - total_esperado: número total de pessoas do grupo
@@ -2382,8 +2388,25 @@ Responda APENAS o JSON válido, sem markdown.`,
       const clean = rawText.replace(/```json|```/g, "").trim();
       const dados = JSON.parse(clean);
 
-      // deriva dia se ausente mas houver data
-      if (dados.data && !dados.dia) {
+      // corrige ano se Claude inferiu ano anterior ao atual
+      if (dados.data) {
+        const partes = String(dados.data).split("/");
+        if (partes.length === 3) {
+          const anoDoc = parseInt(partes[2]);
+          if (!isNaN(anoDoc) && anoDoc < anoAtual) {
+            // se o mês/dia já passou neste ano, usar o ano seguinte; senão, ano atual
+            const mes = parseInt(partes[1]);
+            const dia = parseInt(partes[0]);
+            const candidata = new Date(anoAtual, mes - 1, dia);
+            const novoAno = candidata < hojeRef ? anoAtual + 1 : anoAtual;
+            dados.data = `${partes[0].padStart(2,"0")}/${partes[1].padStart(2,"0")}/${novoAno}`;
+            console.log(`Ano corrigido na /reservar: ${anoDoc} → ${novoAno}`);
+          }
+        }
+      }
+
+      // sempre recalcula o dia da semana a partir da data corrigida (ignora o que o Claude disse)
+      if (dados.data) {
         try { dados.dia = getDiaSemana(dados.data).toUpperCase(); } catch {}
       }
       // se total_esperado vier mas lugares não, usa total

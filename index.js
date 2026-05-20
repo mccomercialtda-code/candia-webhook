@@ -2016,6 +2016,15 @@ async function saveHistory(userId, history) {
   await redisSet(`hist:${userId}`, JSON.stringify(history), 86400 * 7);
 }
 
+// salva uma mensagem isolada no histórico (mesmo sem processar pelo bot)
+async function addToHistory(userId, role, content) {
+  if (!content) return;
+  const hist = await getHistory(userId);
+  hist.push({ role, content });
+  if (hist.length > 40) hist.splice(0, 2);
+  await saveHistory(userId, hist);
+}
+
 async function isPaused(userId) {
   return !!(await redisGet(`paused:${userId}`));
 }
@@ -3390,6 +3399,8 @@ app.post("/", async (req, res) => {
 
     if (await isConversaEscalada(senderId)) {
       console.log(`Conversa com ${senderId} está escalada — ignorando mensagem`);
+      const msgEscaladaTexto = messaging?.message?.text;
+      if (msgEscaladaTexto) await addToHistory(senderId, "user", msgEscaladaTexto);
       return;
     }
 
@@ -3412,6 +3423,8 @@ app.post("/", async (req, res) => {
     console.log(`Conversa com ${senderId} auto-reativada após pausa antiga`);
   } else {
     console.log(`Conversa com ${senderId} pausada — ignorando`);
+    const msgPausadaTexto = messaging?.message?.text;
+    if (msgPausadaTexto) await addToHistory(senderId, "user", msgPausadaTexto);
     return;
   }
 }

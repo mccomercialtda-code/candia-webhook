@@ -353,14 +353,14 @@ async function salvarReservaNaNotion(data, instagramId) {
 
   // Ambas as tentativas falharam — notifica com dados completos para salvar manualmente
   await notifyOwner(
-    `🚨 FALHA ao salvar reserva no Notion após 2 tentativas!\n` +
-    `Instagram ID: ${instagramId}\n` +
-    `Nome: ${data.aniversariante}\n` +
-    `Data: ${data.data} (${data.dia})\n` +
-    `Contato: ${data.contato}\n` +
-    `Lugares: ${data.lugares} | Total esperado: ${data.total_esperado}\n` +
-    `Obs: ${data.observacao || "—"}\n` +
-    `⚠️ Salve manualmente no Notion!`
+    `⚠️ Reserva NÃO gravada no Notion!\n` +
+    `👤 Cliente: ${instagramId}\n` +
+    `📋 Aniversariante: ${data.aniversariante || "—"}\n` +
+    `📅 Data: ${data.data || "—"}${data.dia ? ` (${data.dia})` : ""}\n` +
+    `👥 Pessoas: ${data.total_esperado || "—"}\n` +
+    `📞 Contato: ${data.contato || "—"}\n` +
+    `📍 Local: ${data.local || "—"}\n\n` +
+    `Grave manualmente ou use /reservar @username`
   );
   return false;
 }
@@ -1603,9 +1603,12 @@ Ahh, e só mais um detalhe: para este dia, no momento, só estamos tendo disponi
 Bora fazer a reserva?"
 
 * Após o cliente confirmar com "sim", "bora", "pode ser" ou similar, pedir nome completo, telefone e previsão de convidados
+* Após enviar a mensagem exata de sábado e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", etc), ir DIRETO para pedir nome completo e telefone — sem repetir condições, sem perguntar novamente se aceita, sem consultar disponibilidade outra vez
+* O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata de sábado e o cliente confirmou, o fluxo está na etapa de coleta de dados
 * NUNCA perguntar quantas pessoas antes de enviar essa mensagem — enviar assim que confirmar disponibilidade para sábado
 
-* NUNCA repetir informações já fornecidas na mesma conversa — se o cliente já foi informado sobre horário de reserva, limite de lugares ou condições do dia, não repetir. Apenas confirmar ou avançar no fluxo.
+* NUNCA repetir informações já fornecidas na mesma conversa — se as condições do dia já foram informadas, não repetir mesmo que haja nova consulta de disponibilidade
+* Antes de qualquer resposta, verificar o histórico para evitar duplicação de conteúdo — se o cliente já foi informado sobre horário de reserva, limite de lugares ou condições do dia, não repetir. Apenas confirmar ou avançar no fluxo.
 * Se o cliente pedir reserva para HOJE, não processar — [ESCALAR: motivo=Reserva para o mesmo dia]
 
 FORMATO OBRIGATÓRIO DO BLOCO DE RESERVA
@@ -3140,18 +3143,8 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
 
   console.log("Resposta Claude:", reply);
 
-  paused = await isPaused(userId);
-  if (paused) {
-    console.log(`Conversa com ${userId} pausada após Claude — cancelando envio`);
-    return;
-  }
-
-  const finalToken = await getDebounceToken(userId);
-  if (finalToken !== myToken) {
-    console.log(`Token cancelado para ${userId} durante chamada ao Claude — cancelando envio`);
-    return;
-  }
-
+  // O processamento de [RESERVA:] e [ESCALAR:] ocorre INDEPENDENTE de cancelamento de token —
+  // a gravação no Notion precisa ser garantida mesmo se uma nova mensagem chegar antes do envio.
   history.push({ role: "assistant", content: reply });
   await saveHistory(userId, history);
 
@@ -3247,7 +3240,22 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     await redisDel(`contato_detectado:${userId}`);
     await cancelarFollowUp(userId);
   } else {
-  const salvou = await salvarReservaNaNotion(reservation, userId);
+  let salvou = false;
+  try {
+    salvou = await salvarReservaNaNotion(reservation, userId);
+  } catch (err) {
+    console.error(`Falha ao gravar reserva de ${userId}:`, err);
+    await notifyOwner(
+      `⚠️ Reserva NÃO gravada no Notion!\n` +
+      `👤 Cliente: ${userId}\n` +
+      `📋 Aniversariante: ${reservation.aniversariante || "—"}\n` +
+      `📅 Data: ${reservation.data || "—"}${reservation.dia ? ` (${reservation.dia})` : ""}\n` +
+      `👥 Pessoas: ${reservation.total_esperado || "—"}\n` +
+      `📞 Contato: ${reservation.contato || "—"}\n` +
+      `📍 Local: ${reservation.local || "—"}\n\n` +
+      `Grave manualmente ou use /reservar @username`
+    );
+  }
 
   if (salvou) {
     await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
@@ -3313,6 +3321,18 @@ if (escalation) {
   if (pedindoDadosReserva) {
     await redisSet(`aguardando_contato:${userId}`, "1", 600);
     console.log(`Bot está aguardando telefone/previsão de pessoas de ${userId}`);
+  }
+
+  // Gating de envio: reserva já foi gravada acima; só bloqueia a resposta ao cliente.
+  const pausedFinal = await isPaused(userId);
+  if (pausedFinal) {
+    console.log(`Conversa com ${userId} pausada após Claude — cancelando envio (reserva já tratada acima)`);
+    return;
+  }
+  const finalToken = await getDebounceToken(userId);
+  if (finalToken !== myToken) {
+    console.log(`Token cancelado para ${userId} durante chamada ao Claude — cancelando envio (reserva já tratada acima)`);
+    return;
   }
 
   await markLastReply(userId, cleanReply);

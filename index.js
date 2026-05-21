@@ -435,7 +435,7 @@ async function buscarReservasPorData(dataISO) {
 }
 
 async function buscarProgramacaoPorData(dataISO) {
-  try {
+  const callNotion = async () => {
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_PROGRAMACAO_DB_ID}/query`, {
       method: "POST",
       headers: {
@@ -447,7 +447,22 @@ async function buscarProgramacaoPorData(dataISO) {
         filter: { property: "Data", date: { equals: dataISO } }
       })
     });
-    const data = await res.json();
+    return await res.json();
+  };
+
+  try {
+    let data;
+    try {
+      data = await callNotion();
+    } catch (err) {
+      if (err.message && err.message.includes("Unexpected token '<'")) {
+        console.log("Rate limit Notion programação — aguardando 10s antes de retry");
+        await sleep(10000);
+        data = await callNotion();
+      } else {
+        throw err;
+      }
+    }
     const results = data.results || [];
     if (results.length > 0) {
       const linhas = results.map(p => {
@@ -1360,6 +1375,7 @@ MÚSICA AO VIVO
 * NUNCA dizer que o bar fecha à meia-noite quando o cliente perguntar sobre música — responda apenas com o horário da música
 * Sexta a domingo: samba
 * Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
+* Se o cliente perguntar onde é a música, onde toca o samba, ou onde fica o palco, responder: "A música normalmente fica na parte interna do bar 😊"
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
 * Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder qualquer pergunta sobre música, artista, horário, estilo ou Instagram do artista — mesmo que a pergunta seja indireta
 * Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ da programação — nunca redirecione para @ocandiabar nesse caso
@@ -1553,6 +1569,8 @@ FLUXO DE RESERVA
   - Pergunta sobre número de pessoas
 
 * NUNCA perguntar se o cliente consegue chegar até o horário — apenas informar o horário e seguir
+* NUNCA perguntar se o cliente topa o formato, aceita as condições ou consegue chegar até o horário limite — apenas informar as condições e seguir
+* Após informar as condições do dia, perguntar apenas nome completo e telefone e previsão de convidados
 
 * Após o cliente informar o número de pessoas, pedir nome completo e telefone diretamente — sem fazer mais perguntas intermediárias
 
@@ -1561,6 +1579,31 @@ FLUXO DE RESERVA
 
 * EXEMPLO correto para sábado:
   "Ótimo, 23/05 tem disponibilidade! 😊 No sábado a mesa fica segurada até as 15h, com tolerância de 15 minutinhos. Quantas pessoas vêm?"
+
+* Quando o cliente quiser reserva para um SÁBADO e houver disponibilidade, usar OBRIGATORIAMENTE uma dessas mensagens exatas — nunca parafrasear ou resumir:
+
+SE disponibilidade COBERTA (tipo: 'coberto'):
+"Será um prazer recebê-los aqui 😊
+Vou te explicar como funciona aos sábados:
+
+Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no sábado, só conseguimos segurar as mesas reservadas até as 15hs ⏰
+Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 8 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡
+
+Bora fazer a reserva?"
+
+SE disponibilidade apenas DESCOBERTA (tipo: 'descoberto'):
+"Será um prazer recebê-los aqui 😊
+Vou te explicar como funciona aos sábados:
+
+Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no sábado, só conseguimos segurar as mesas reservadas até as 15hs ⏰
+Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 8 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡
+
+Ahh, e só mais um detalhe: para este dia, no momento, só estamos tendo disponibilidade de reservas na área externa (na calçada) do bar, que é descoberta.
+
+Bora fazer a reserva?"
+
+* Após o cliente confirmar com "sim", "bora", "pode ser" ou similar, pedir nome completo, telefone e previsão de convidados
+* NUNCA perguntar quantas pessoas antes de enviar essa mensagem — enviar assim que confirmar disponibilidade para sábado
 
 * NUNCA repetir informações já fornecidas na mesma conversa — se o cliente já foi informado sobre horário de reserva, limite de lugares ou condições do dia, não repetir. Apenas confirmar ou avançar no fluxo.
 * Se o cliente pedir reserva para HOJE, não processar — [ESCALAR: motivo=Reserva para o mesmo dia]
@@ -3366,6 +3409,14 @@ app.post("/", async (req, res) => {
     }
     await markMessageProcessed(echoMid);
   }
+
+  // Debounce: ignora intervenções subsequentes do mesmo atendente nos próximos 5s
+  const intervencaoRecente = await redisGet(`intervencao:${recipientId}`);
+  if (intervencaoRecente) {
+    console.log(`Intervenção humana duplicada ignorada para ${recipientId} (debounce 5s)`);
+    return;
+  }
+  await redisSet(`intervencao:${recipientId}`, "1", 5);
 
   // Intervenção humana real
   console.log(`Intervenção humana REAL detectada para ${recipientId}`);

@@ -465,7 +465,17 @@ async function buscarProgramacaoPorData(dataISO) {
     }
     const results = data.results || [];
     if (results.length > 0) {
+      let especial = false;
+      let mensagemExata = null;
+      let instrucoes = null;
       const linhas = results.map(p => {
+        if (p.properties?.["Especial"]?.checkbox) {
+          especial = true;
+          const me = p.properties?.["Mensagem Exata"]?.rich_text?.[0]?.plain_text || null;
+          const ins = p.properties?.["Instruções"]?.rich_text?.[0]?.plain_text || null;
+          if (me && !mensagemExata) mensagemExata = me;
+          if (ins && !instrucoes) instrucoes = ins;
+        }
         const artista = p.properties?.Artista?.title?.[0]?.plain_text || "A confirmar";
         const horarioProp = p.properties?.Horario;
         const horario = (
@@ -484,7 +494,7 @@ async function buscarProgramacaoPorData(dataISO) {
         if (estilo) partes.push(estilo);
         return `- ${partes.join(" — ")}`;
       });
-      return linhas.join("\n");
+      return { linhas: linhas.join("\n"), especial, mensagemExata, instrucoes };
     }
     return null;
   } catch (err) {
@@ -1387,13 +1397,29 @@ MÚSICA AO VIVO
 * EXCEÇÃO ÚNICA: se o RESUMO DA CONVERSA já indicar que o cliente recebeu essa mensagem anteriormente, NÃO repetir — responder naturalmente ao contexto atual usando as informações do resumo
 * Se o briefing for MENSAGEM EXATA e o cliente perguntar especificamente sobre programação/atrações/horários das músicas, após enviar a mensagem exata, complementar com os horários das atrações disponíveis no PROGRAMAÇÃO DO DIA
 
+* Ao consultar a programação de uma data, verificar se há campo MENSAGEM EXATA DA PROGRAMAÇÃO no contexto — se sim, enviar OBRIGATORIAMENTE esse texto palavra por palavra quando o cliente perguntar sobre programação ou evento especial, sem alterar nem resumir
+* As INSTRUÇÕES ESPECIAIS DO DIA devem ser seguidas para conduzir a conversa naquele dia — substituem briefing de programação mas NÃO substituem as regras fixas de reserva por dia da semana
+* Se não houver mensagem exata, seguir o fluxo normal
+
+* FLUXO OBRIGATÓRIO ao receber qualquer pergunta sobre programação, evento, show, música ou atrações:
+  1. Verificar se existe MENSAGEM EXATA DA PROGRAMAÇÃO no contexto
+  2. Se existe → enviar essa mensagem palavra por palavra, sem alterar, sem adicionar, sem resumir. PARAR AQUI.
+  3. Se não existe → informar a programação normal do dia (artista, horário, estilo)
+
+* Este fluxo se aplica a qualquer variação da pergunta: "o que tem hoje?", "qual a programação?", "quem vai tocar?", "tem show?", "qual o evento?", "o que vai rolar?" etc.
+
+* NUNCA misturar a mensagem exata com outras informações — ela já contém tudo que o cliente precisa saber sobre o evento
+* NUNCA resumir ou parafrasear a mensagem exata — usar o texto integral
+* A mensagem exata NÃO substitui as regras de reserva do dia — se o cliente perguntar sobre reserva após receber a mensagem exata, seguir normalmente o fluxo de reserva do dia da semana correspondente
+
 COUVERT
 
 * Terça a quinta: R$12
 * Sexta a domingo: R$10
 * Só mencionar se perguntarem
 * ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor — R$12 para terça/quarta/quinta e R$10 para sexta/sábado/domingo
-* NUNCA mencionar couvert ou valor de entrada na mensagem de confirmação da reserva — informar apenas se o cliente perguntar explicitamente
+* NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
+* Informar couvert apenas se o cliente perguntar explicitamente
 
 ENTRADA / COUVERT
 
@@ -1401,7 +1427,8 @@ ENTRADA / COUVERT
 * Sempre dizer que há couvert
 * Nunca dizer "não tem entrada"
 * NUNCA dizer "entrada gratuita", "entrada franca", "entrada livre" ou qualquer variação — sempre há couvert
-* NUNCA mencionar couvert ou valor de entrada na mensagem de confirmação da reserva — informar apenas se o cliente perguntar explicitamente
+* NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
+* Informar couvert apenas se o cliente perguntar explicitamente
 
 FORMA DE PAGAMENTO / COMANDA
 
@@ -1667,8 +1694,11 @@ FLUXO GENÉRICO (PARA TER/QUA/QUI — NÃO USAR EM SEXTA, SÁBADO OU DOMINGO)
 REGRAS GERAIS DO FLUXO (APLICAM-SE A TODOS OS DIAS)
 ────────────────
 
-* Na mensagem de confirmação da reserva (de qualquer dia com mensagem exata — sábado, sexta, domingo), NUNCA repetir informações sobre limite de lugares sentados ou horário — essas informações já foram informadas na mensagem exata enviada anteriormente
-* A confirmação deve conter apenas: nome, data, e despedida animada
+* A mensagem de confirmação de reserva de SÁBADO deve conter APENAS: nome do aniversariante, data e despedida animada — NADA MAIS
+* PROIBIDO na confirmação de sábado: mencionar limite de lugares, horário de reserva, tolerância, couvert, política de chegada
+* Exemplo correto: "Reserva confirmada, [Nome]! 🎉 A gente te espera no dia [data] para comemorar muito! 🧡"
+* Essas informações já foram dadas na mensagem exata — repetir é desnecessário e prejudica a experiência
+* A mesma regra de confirmação enxuta se aplica a SEXTA e DOMINGO quando a mensagem exata daqueles dias já foi enviada
 
 * NUNCA perguntar se o cliente consegue chegar até o horário — apenas informar o horário e seguir
 * NUNCA perguntar se o cliente topa o formato, aceita as condições ou consegue chegar até o horário limite — apenas informar as condições e seguir
@@ -3075,7 +3105,7 @@ let programacaoConsulta = null;
 if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
   console.log(`Programação conteúdo:`, programacaoConsulta);
-  console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? "encontrada" : "não encontrada"}`);
+  console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? `encontrada${programacaoConsulta.especial ? " (especial)" : ""}` : "não encontrada"}`);
 }
 
 // não injeta esgotado se cliente já tem reserva
@@ -3107,7 +3137,16 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
     systemPrompt += `BRIEFING DO DIA: ${regrasDiaConsulta.briefing}\n`;
   }
   if (programacaoConsulta) {
-    systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta}\n`;
+    systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta.linhas}\n`;
+    if (programacaoConsulta.especial) {
+      if (programacaoConsulta.mensagemExata) {
+        systemPrompt += `\nMENSAGEM EXATA DA PROGRAMAÇÃO: ${programacaoConsulta.mensagemExata}\n`;
+      }
+      if (programacaoConsulta.instrucoes) {
+        systemPrompt += `INSTRUÇÕES ESPECIAIS DO DIA: ${programacaoConsulta.instrucoes}\n`;
+      }
+      systemPrompt += `PRIORIDADE: a MENSAGEM EXATA DA PROGRAMAÇÃO sobrepõe qualquer briefing apenas para perguntas sobre programação/evento/show/atração. As regras fixas de reserva por dia da semana (mensagem exata de sábado/sexta/domingo, limites de lugares, horários de reserva) continuam valendo normalmente.\n`;
+    }
   }
   systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação. Se em mensagens anteriores você disse que não tinha a programação, IGNORE — agora você TEM os dados e DEVE usá-los.\n`;
 }

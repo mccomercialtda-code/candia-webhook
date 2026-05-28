@@ -1313,6 +1313,8 @@ REGRA GERAL
 * Em geral, NÃO mencionar o dia da semana em respostas. Evitar dizer "é uma sexta", "é um sábado", "cai numa quinta", "dia X é terça" etc. Responder com a data numérica (DD/MM ou DD/MM/AAAA) na maior parte dos casos. EXCEÇÃO PERMITIDA: ao informar o horário-limite da mesa após confirmar disponibilidade, pode usar a estrutura "No <dia> a mesa fica segurada até as <hora>…" conforme exemplos em FLUXO DE RESERVA. Mesmo nessa exceção, jamais usar dia da semana apenas para responder "qual é o dia" — só dentro do contexto do horário-limite
 * Nunca usar separadores como "---", "***" ou similares nas mensagens
 * Se o cliente não perguntar diretamente por reserva, pode oferecer — mas somente uma vez. Não ofereça em todas as mensagens
+* NUNCA inventar ou usar blocos de comando como [CONSULTAR_DISPONIBILIDADE:] ou qualquer outro bloco não definido — esses blocos não existem no sistema e serão enviados ao cliente como texto. Os únicos blocos válidos são [RESERVA:...] e [ESCALAR:...]
+* Se a disponibilidade de uma data não estiver no contexto, responder normalmente — o sistema já verificou antes de chamar o Claude
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -1580,6 +1582,13 @@ FLUXO DE RESERVA
 * PRIORIDADE MÁXIMA: para reservas de SÁBADO, SEXTA e DOMINGO, seguir EXCLUSIVAMENTE o fluxo com mensagem exata definido abaixo — ignorar qualquer outra instrução genérica de fluxo de reserva
 * Remover qualquer uso de "quer seguir", "topa esse formato", "consegue chegar", "podemos seguir" — NUNCA usar essas expressões
 * A mensagem exata deve ser enviada DIRETAMENTE, sem nenhuma frase introdutória antes como "Deixa eu verificar", "Ótimo!", "Que legal!" ou qualquer prefácio — começar imediatamente com "Será um prazer recebê-los aqui 😊"
+* Ao enviar a mensagem exata de sábado, sexta ou domingo, verificar OBRIGATORIAMENTE o tipo de disponibilidade no contexto:
+  - Se tipo = 'coberto' → enviar versão SEM parágrafo de área externa
+  - Se tipo = 'descoberto' → enviar versão COM parágrafo de área externa ("Ahh, e só mais um detalhe...")
+  - NUNCA enviar a versão errada independente de qualquer outra informação na conversa
+* A mensagem exata começa DIRETAMENTE com "Será um prazer recebê-los aqui 😊" — a primeira palavra da resposta deve ser "Será"
+* PROIBIDO qualquer frase antes da mensagem exata, mesmo que o cliente tenha perguntado outra coisa antes, mesmo que seja para responder sobre bolo, programação ou qualquer outro assunto
+* Se o cliente perguntou outra coisa junto com a reserva, responder a outra pergunta em mensagem SEPARADA, depois enviar a mensagem exata
 
 * ANTES de qualquer passo do fluxo de reserva, SEMPRE verificar a disponibilidade da data informada pelo cliente — se estiver esgotada ou com briefing de encerramento, informar imediatamente sem coletar dados
 * NUNCA confirmar reserva para data esgotada, independente do briefing estar presente ou não
@@ -1694,9 +1703,15 @@ FLUXO GENÉRICO (PARA TER/QUA/QUI — NÃO USAR EM SEXTA, SÁBADO OU DOMINGO)
 REGRAS GERAIS DO FLUXO (APLICAM-SE A TODOS OS DIAS)
 ────────────────
 
-* A mensagem de confirmação de reserva de SÁBADO deve conter APENAS: nome do aniversariante, data e despedida animada — NADA MAIS
-* PROIBIDO na confirmação de sábado: mencionar limite de lugares, horário de reserva, tolerância, couvert, política de chegada
-* Exemplo correto: "Reserva confirmada, [Nome]! 🎉 A gente te espera no dia [data] para comemorar muito! 🧡"
+* Confirmação de reserva de sábado deve conter SOMENTE: nome e despedida animada
+* EXEMPLO CORRETO: "Reserva confirmada, [Nome]! 🎉 A gente te espera no dia [data] para comemorar muito! 🧡"
+* EXEMPLOS PROIBIDOS na confirmação:
+  - "A mesa fica segurada até as 15h" ❌
+  - "Com tolerância de 15 minutinhos" ❌
+  - "Garantimos 8 lugares sentados" ❌
+  - "O restante fica em volta" ❌
+  - "A entrada é R$10" ❌
+  - Qualquer outra informação além de nome, data e despedida ❌
 * Essas informações já foram dadas na mensagem exata — repetir é desnecessário e prejudica a experiência
 * A mesma regra de confirmação enxuta se aplica a SEXTA e DOMINGO quando a mensagem exata daqueles dias já foi enviada
 
@@ -2859,20 +2874,51 @@ async function buscarUsernameInstagram(userId) {
   }
 }
 
+// remove blocos internos antes de enviar ao cliente (defesa em todos os call sites)
+function limparBlocosInternos(texto) {
+  if (!texto) return texto;
+  return texto.replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "").trim();
+}
+
+// divide mensagens longas em partes preservando parágrafos
+function dividirMensagem(texto, limite = 900) {
+  if (!texto || texto.length <= limite) return [texto];
+  const paragrafos = texto.split("\n\n");
+  const mensagens = [];
+  let atual = "";
+  for (const p of paragrafos) {
+    if ((atual + "\n\n" + p).length > limite) {
+      if (atual) mensagens.push(atual.trim());
+      atual = p;
+    } else {
+      atual = atual ? atual + "\n\n" + p : p;
+    }
+  }
+  if (atual) mensagens.push(atual.trim());
+  return mensagens.filter(m => m && m.length > 0);
+}
+
 async function sendInstagramMessage(userId, text) {
-  const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "Authorization": `Bearer ${IG_TOKEN}`
-    },
-    body: JSON.stringify({
-      recipient: { id: userId },
-      message: { text }
-    })
-  });
-  const igData = await igRes.json();
-  console.log("Resposta Graph API:", JSON.stringify(igData));
+  const limpo = limparBlocosInternos(text);
+  if (!limpo) return;
+  const partes = dividirMensagem(limpo, 900);
+  for (let i = 0; i < partes.length; i++) {
+    const parte = partes[i];
+    const igRes = await fetch(`https://graph.instagram.com/v25.0/${IG_ACCOUNT_ID}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Authorization": `Bearer ${IG_TOKEN}`
+      },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: { text: parte }
+      })
+    });
+    const igData = await igRes.json();
+    console.log(`Resposta Graph API (parte ${i+1}/${partes.length}):`, JSON.stringify(igData));
+    if (i < partes.length - 1) await sleep(500);
+  }
 }
 
 // escalada silenciosa: notifica owner, marca como escalada e limpa estado
@@ -3404,8 +3450,7 @@ if (escalation) {
 }
 
   const cleanReply = reply
-    .replace(/\[RESERVA:.*?\]/gs, "")
-    .replace(/\[ESCALAR:.*?\]/gs, "")
+    .replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "")
     .trim();
 
   if (await shouldSkipDuplicateReply(userId, cleanReply)) {

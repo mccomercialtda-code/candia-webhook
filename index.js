@@ -295,6 +295,24 @@ async function verificarDisponibilidade(dataStr) {
 
 // PONTO 9: retry automático + notificação com dados completos em caso de falha
 async function salvarReservaNaNotion(data, instagramId) {
+  // Guarda: bloqueia qualquer reserva com ano anterior a 2026
+  const partesData = String(data.data || "").split("/");
+  const anoReserva = partesData.length === 3 ? parseInt(partesData[2]) : NaN;
+  if (!isNaN(anoReserva) && anoReserva < 2026) {
+    console.error(`Reserva bloqueada: ano ${anoReserva} < 2026 para ${instagramId}`);
+    await notifyOwner(
+      `⚠️ Reserva BLOQUEADA — ano inválido (${anoReserva} < 2026)!\n` +
+      `👤 Cliente: ${instagramId}\n` +
+      `📋 Aniversariante: ${data.aniversariante || "—"}\n` +
+      `📅 Data: ${data.data || "—"}${data.dia ? ` (${data.dia})` : ""}\n` +
+      `👥 Pessoas: ${data.total_esperado || "—"}\n` +
+      `📞 Contato: ${data.contato || "—"}\n` +
+      `📍 Local: ${data.local || "—"}\n\n` +
+      `Corrija o ano e use /reservar @username para gravar manualmente.`
+    );
+    return false;
+  }
+
   const properties = {
     "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
     "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },

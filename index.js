@@ -1249,7 +1249,9 @@ async function gerarResumoConversa(hist) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-        system: "Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. REGRAS OBRIGATÓRIAS: (1) Se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. (2) Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. NUNCA, em nenhuma hipótese, escrever a palavra 'confirmada' para a reserva se o bloco [RESERVA: ...] não estiver presente no histórico. (3) NUNCA reproduzir, copiar ou citar trechos das mensagens do histórico no resumo — escreva SEMPRE com suas próprias palavras, em terceira pessoa, descrevendo o que foi combinado. Não use aspas. Não cole frases do cliente nem do atendente. Seja objetivo e direto. Responda apenas o resumo, sem introdução.",
+        system: `ATENÇÃO: O ano atual é ${new Date().getFullYear()}. Qualquer data mencionada sem ano explícito (ex: "03/06", "dia 3 de junho") deve ser interpretada como ${new Date().getFullYear()}. NUNCA usar 2025 nem qualquer ano anterior.
+
+Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. REGRAS OBRIGATÓRIAS: (1) Se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. (2) Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. NUNCA, em nenhuma hipótese, escrever a palavra 'confirmada' para a reserva se o bloco [RESERVA: ...] não estiver presente no histórico. (3) NUNCA reproduzir, copiar ou citar trechos das mensagens do histórico no resumo — escreva SEMPRE com suas próprias palavras, em terceira pessoa, descrevendo o que foi combinado. Não use aspas. Não cole frases do cliente nem do atendente. Seja objetivo e direto. Responda apenas o resumo, sem introdução.`,
         messages: [{ role: "user", content: hist.map(h => `${h.role}: ${h.content}`).join("\n") }]
       })
     });
@@ -1295,6 +1297,12 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
 
 DATA E HORA ATUAL
 Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
+
+ATENÇÃO — INTERPRETAÇÃO DE DATAS
+* O ano atual é ${now.getFullYear()}. SEMPRE interpretar datas sem ano explícito como ${now.getFullYear()}.
+* Exemplos: "03/06" = 03/06/${now.getFullYear()}, "dia 13 de junho" = 13/06/${now.getFullYear()}
+* NUNCA assumir 2025 (nem qualquer ano anterior a ${now.getFullYear()}) para qualquer data
+* Se o mês mencionado já passou neste ano, usar ${now.getFullYear() + 1}
 ${dispInfo}${regrasEspeciaisInfo}
 
 IDENTIDADE E TOM

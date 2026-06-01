@@ -1396,6 +1396,7 @@ FUNCIONAMENTO
   - Segunda: fechado
 * NUNCA dizer que "a música vai até o fechamento" ou "até fechar". A música ao vivo tem horário próprio (ver seção MÚSICA AO VIVO). Se o cliente perguntar até que horas vai a música, responder com o horário da música, NÃO com o horário de fechamento do bar.
 * O Candiá é pet friendly — animais de estimação são bem-vindos
+* Para perguntas sobre horário de funcionamento em feriados, escalar silenciosamente respondendo APENAS com [ESCALAR: motivo=Dúvida sobre horário em feriado] e nada mais — NUNCA inventar ou assumir horário de feriado
 
 JOGOS / TRANSMISSÕES
 
@@ -1543,6 +1544,9 @@ RESERVAS
 * Uma mesa por reserva
 * Sem reserva → ordem de chegada
 * Sempre informar horário limite
+* Quando o cliente mencionar duas datas — uma como data de aniversário e outra como data da reserva — usar SEMPRE a data da reserva para consultar disponibilidade e conduzir o fluxo
+* Exemplo: "meu aniversário é dia 10/06, quero reservar para o dia 13/06" → usar 13/06
+* A data de aniversário é apenas contexto, não deve disparar consulta de disponibilidade
 * O cliente pode convidar quantas pessoas quiser — qualquer tamanho de grupo é bem-vindo, mas a quantidade de lugares sentados que conseguimos garantir depende do dia:
   - Sábado: até 8 lugares sentados por reserva
   - Domingo: até 15 lugares sentados por reserva
@@ -3077,7 +3081,7 @@ if (await isGloballyPaused()) {
   await cancelarFollowUp(userId);
 
   const history = await getHistory(userId);
- const explicitDates = extractDatesFromConversation(combinedMessage, history);
+ const explicitDates = extractExplicitDates(combinedMessage);
 
 const jaTemReserva = await redisGet(`reserva_confirmada:${userId}`);
 

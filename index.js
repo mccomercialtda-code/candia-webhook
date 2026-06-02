@@ -407,6 +407,38 @@ async function buscarPageIdPorInstagram(userId) {
   }
 }
 
+// retorna a data BR (DD/MM/AAAA) da reserva mais recente do cliente, ou null
+async function getDataReservaCliente(userId) {
+  if (!userId) return null;
+  const cached = await redisGet(`reserva_data:${userId}`);
+  if (cached) return cached;
+  try {
+    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_TOKEN}`,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+      },
+      body: JSON.stringify({
+        filter: { property: "Instagram ID", rich_text: { equals: userId } },
+        sorts: [{ property: "Data", direction: "descending" }],
+        page_size: 1
+      })
+    });
+    const data = await res.json();
+    if (!data.results || data.results.length === 0) return null;
+    const dataISO = data.results[0].properties?.Data?.rich_text?.[0]?.text?.content || "";
+    if (!dataISO) return null;
+    const dataBR = formatDateBR(dataISO);
+    await redisSet(`reserva_data:${userId}`, dataBR, 86400 * 30);
+    return dataBR;
+  } catch (err) {
+    console.error(`Erro ao buscar data da reserva no Notion para ${userId}:`, err);
+    return null;
+  }
+}
+
 async function cancelarReservaNoNotion(userId) {
   try {
     const pageId = await buscarPageIdPorInstagram(userId);
@@ -2641,6 +2673,7 @@ Responda APENAS o JSON válido, sem markdown.`,
         const salvou = await salvarReservaNaNotion(dados, userId);
         if (salvou) {
           await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
+          if (dados.data) await redisSet(`reserva_data:${userId}`, dados.data, 86400 * 30);
           await notifyOwner(
             `✅ Reserva gravada!\n📋 ${dados.aniversariante} | ${dados.data} | ${dados.total_esperado} pessoas | ${dados.contato}`
           );
@@ -2893,6 +2926,7 @@ async function processarRespostaReserva(stateRaw, texto) {
   const salvou = await salvarReservaNaNotion(state.dados, state.userId);
   if (salvou) {
     await redisSet(`reserva_confirmada:${state.userId}`, "1", 86400 * 30);
+    if (state.dados.data) await redisSet(`reserva_data:${state.userId}`, state.dados.data, 86400 * 30);
     const contatoFmt = state.dados.contato.length === 11
       ? `(${state.dados.contato.slice(0,2)}) ${state.dados.contato.slice(2,7)}-${state.dados.contato.slice(7)}`
       : state.dados.contato;
@@ -3186,7 +3220,18 @@ function getPrimaryDate(explicitDates, currentMessage, history = []) {
     .sort((a,b) => b.dt - a.dt);
   return futuras.length > 0 ? futuras[0].d : null;
 }
-const dataPrincipal = getPrimaryDate(explicitDates, combinedMessage, history);
+let dataPrincipal = getPrimaryDate(explicitDates, combinedMessage, history);
+
+// Se cliente já tem reserva confirmada e nenhuma data foi extraída,
+// usar a data da reserva para consultar briefing/programação automaticamente.
+if (!dataPrincipal && jaTemReserva) {
+  const dataReservaCliente = await getDataReservaCliente(userId);
+  if (dataReservaCliente) {
+    dataPrincipal = dataReservaCliente;
+    console.log(`Sem data na msg — usando data da reserva confirmada (${dataPrincipal}) para ${userId}`);
+  }
+}
+
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 const regrasDiaConsulta = dataISOConsulta
@@ -3454,6 +3499,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta) {
 
   if (salvou) {
     await redisSet(`reserva_confirmada:${userId}`, "1", 86400 * 30);
+    if (reservation.data) await redisSet(`reserva_data:${userId}`, reservation.data, 86400 * 30);
     await clearPendingMessages(userId);
     await redisDel(`aguardando_contato:${userId}`);
     await redisDel(`contato_detectado:${userId}`);

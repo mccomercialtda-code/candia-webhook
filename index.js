@@ -1303,6 +1303,8 @@ ATENÇÃO — INTERPRETAÇÃO DE DATAS
 * Exemplos: "03/06" = 03/06/${now.getFullYear()}, "dia 13 de junho" = 13/06/${now.getFullYear()}
 * NUNCA assumir 2025 (nem qualquer ano anterior a ${now.getFullYear()}) para qualquer data
 * Se o mês mencionado já passou neste ano, usar ${now.getFullYear() + 1}
+* Quando o cliente mencionar um dia da semana sem data específica ("quinta", "sábado", "domingo", "essa sexta", "essa semana"), interpretar sempre como o próximo dia da semana mais próximo a partir de hoje
+* Nunca pedir confirmação de qual data o cliente quer — assumir o próximo dia correspondente e seguir
 ${dispInfo}${regrasEspeciaisInfo}
 
 IDENTIDADE E TOM
@@ -1417,6 +1419,9 @@ MÚSICA AO VIVO
 * Se o cliente perguntar onde é a música, onde toca o samba, ou onde fica o palco, responder: "A música normalmente fica na parte interna do bar 😊"
 * NUNCA dizer que não tem música ao vivo em dia de funcionamento
 * Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder qualquer pergunta sobre música, artista, horário, estilo ou Instagram do artista — mesmo que a pergunta seja indireta
+* Ao informar programação, usar SEMPRE o estilo musical exato que consta no Notion — nunca generalizar
+* @rayramirandaa toca brasilidades — NUNCA informar como samba
+* Se o estilo no Notion for "brasilidades", dizer "brasilidades". Se for "samba e pagode", dizer "samba e pagode". Nunca substituir por "samba" genérico
 * Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ da programação — nunca redirecione para @ocandiabar nesse caso
 * Só direcionar para os destaques se NÃO houver PROGRAMAÇÃO DO DIA no prompt — nesse caso, responder: "A programação completa está aqui nos destaques do nosso perfil, no tópico 'Agenda' 😊"
 * NUNCA dizer apenas "acompanhe pelo Instagram" sem especificar onde encontrar
@@ -3206,7 +3211,7 @@ let systemPrompt = getSystemPrompt(
   regrasDiaConsulta
 );
 
-// escalação automática se briefing contém "escalar"
+// escalação automática se briefing contém "escalar" — silenciosa, sem chamar Claude e sem enviar mensagem ao cliente
 if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().includes("escalar")) {
   const usernameEsc = await redisGet(`ig_username:${userId}`);
   await notifyOwner(`⚠️ Escalonamento automático por briefing do dia\nCliente: ${userId}${usernameEsc ? ` (@${usernameEsc})` : ""}\nBriefing: ${regrasDiaConsulta.briefing}\nUse: /reativar ${userId}`);
@@ -3214,8 +3219,6 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   await clearPendingMessages(userId);
   await setDebounceToken(userId, `cancelled_${Date.now()}`);
   await cancelarFollowUp(userId);
-  await redisSet(`echo_bot:${userId}`, "1", 180);
-  await sendInstagramMessage(userId, "Olá! Vou te passar para um de nossos atendentes agora 😊 Em breve alguém te responde por aqui!");
   return;
 }
 

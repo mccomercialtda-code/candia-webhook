@@ -37,6 +37,32 @@ const LIMITES = {
 
 // ─── Helpers de data/hora ─────────────────────────────────────────────────────
 
+// retorna a data atual (00:00) no fuso de Brasília como objeto Date
+function getDataBrasilia() {
+  const agora = new Date();
+  const formatter = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit"
+  });
+  const partes = formatter.formatToParts(agora);
+  const dia = partes.find(p => p.type === "day").value;
+  const mes = partes.find(p => p.type === "month").value;
+  const ano = partes.find(p => p.type === "year").value;
+  return new Date(`${ano}-${mes}-${dia}T00:00:00-03:00`);
+}
+
+// retorna a data completa formatada por extenso no fuso de Brasília (ex.: "terça-feira, 03/06/2026")
+function getDataBrasiliaCompleta() {
+  const agora = new Date();
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(agora);
+}
+
 function getHoraBrasilia() {
   const now = new Date();
   return parseInt(now.toLocaleTimeString("pt-BR", {
@@ -1281,7 +1307,11 @@ async function gerarResumoConversa(hist) {
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 200,
-        system: `ATENÇÃO: O ano atual é ${new Date().getFullYear()}. Qualquer data mencionada sem ano explícito (ex: "03/06", "dia 3 de junho") deve ser interpretada como ${new Date().getFullYear()}. NUNCA usar 2025 nem qualquer ano anterior.
+        system: `Data de hoje no fuso de Brasília: ${getDataBrasiliaCompleta()}.
+"Amanhã" = dia seguinte a essa data.
+"Essa semana" = semana atual nesse fuso.
+Qualquer data sem ano explícito = 2026.
+NUNCA usar 2025.
 
 Você vai resumir em 1-3 frases curtas o que foi combinado nesta conversa entre cliente e atendente de um bar. Foque em: data/hora da reserva, número de pessoas, condições especiais prometidas, status da reserva. REGRAS OBRIGATÓRIAS: (1) Se houver um bloco [RESERVA: ...] no histórico, a reserva está CONFIRMADA — nunca diga que não há reserva confirmada nesses casos. (2) Se o bloco [RESERVA: ...] NÃO estiver presente, a reserva NÃO está confirmada — descreva o status real: pendente, aguardando telefone, aguardando confirmação etc. NUNCA, em nenhuma hipótese, escrever a palavra 'confirmada' para a reserva se o bloco [RESERVA: ...] não estiver presente no histórico. (3) NUNCA reproduzir, copiar ou citar trechos das mensagens do histórico no resumo — escreva SEMPRE com suas próprias palavras, em terceira pessoa, descrevendo o que foi combinado. Não use aspas. Não cole frases do cliente nem do atendente. Seja objetivo e direto. Responda apenas o resumo, sem introdução.`,
         messages: [{ role: "user", content: hist.map(h => `${h.role}: ${h.content}`).join("\n") }]
@@ -1328,7 +1358,11 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
    return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 DATA E HORA ATUAL
-Hoje é ${dataHoje}, ${horaAgora} (horário de Brasília). Use isso para interpretar "hoje", "amanhã", "essa sexta", "esta semana" etc.
+Data de hoje no fuso de Brasília: ${getDataBrasiliaCompleta()} — agora são ${horaAgora}.
+"Amanhã" = dia seguinte a essa data.
+"Essa semana" = semana atual nesse fuso.
+Qualquer data sem ano explícito = 2026.
+NUNCA usar 2025.
 
 ATENÇÃO — INTERPRETAÇÃO DE DATAS
 * O ano atual é ${now.getFullYear()}. SEMPRE interpretar datas sem ano explícito como ${now.getFullYear()}.
@@ -2583,7 +2617,7 @@ if (cmd.startsWith("/data ")) {
     await notifyOwner(`🔍 Buscando dados de reserva no histórico de ${userId}${igUsername ? ` (@${igUsername})` : ""}...`);
 
     try {
-      const hojeRef = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+      const hojeRef = getDataBrasilia();
       const anoAtual = hojeRef.getFullYear();
       const dataAtualFmt = `${String(hojeRef.getDate()).padStart(2,"0")}/${String(hojeRef.getMonth()+1).padStart(2,"0")}/${anoAtual}`;
 
@@ -2599,7 +2633,12 @@ if (cmd.startsWith("/data ")) {
           max_tokens: 512,
           system: `Você vai extrair, do histórico de conversa de um cliente do Candiá Bar, todos os dados de reserva que estiverem disponíveis.
 
-DATA DE REFERÊNCIA: hoje é ${dataAtualFmt} (horário de Brasília). Ao interpretar datas sem ano explícito, sempre usar ${anoAtual}. Se o mês mencionado já passou neste ano (mês menor que o atual), usar ${anoAtual + 1}. NUNCA usar ano de anos anteriores nem fixar manualmente um ano (ex.: 2025) — sempre derivar com base na DATA DE REFERÊNCIA.
+Data de hoje no fuso de Brasília: ${getDataBrasiliaCompleta()} (numérico: ${dataAtualFmt}).
+"Amanhã" = dia seguinte a essa data.
+"Essa semana" = semana atual nesse fuso.
+Qualquer data sem ano explícito = 2026.
+NUNCA usar 2025.
+Ao interpretar datas sem ano explícito, sempre usar ${anoAtual}. Se o mês mencionado já passou neste ano (mês menor que o atual), usar ${anoAtual + 1}. NUNCA usar ano de anos anteriores nem fixar manualmente um ano (ex.: 2025) — sempre derivar com base na data acima.
 
 SEMPRE retorne JSON com TODOS os campos abaixo. Se um campo não estiver presente no histórico, retorne string vazia "" (ou 0 para números).
 
@@ -3159,8 +3198,7 @@ const querAlterarReserva =
 
   let disponibilidadeInfo = "";
   if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
-    const hoje = new Date();
-    const hojeStr = dateToBR(new Date(hoje.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" })));
+    const hojeStr = dateToBR(getDataBrasilia());
     for (const data of explicitDates) {
       const disp = await verificarDisponibilidade(data);
       // bloqueia reserva no mesmo dia após horário limite
@@ -3206,7 +3244,7 @@ function getPrimaryDate(explicitDates, currentMessage, history = []) {
   const ultimas3 = history.slice(-3).map(h => h.content || "").join(" ");
   const datesInRecent = extractExplicitDates(ultimas3);
   if (datesInRecent.length > 0) {
-    const hoje = new Date();
+    const hoje = getDataBrasilia();
     const futuras = datesInRecent
       .map(d => { const [dia,mes,ano] = d.split("/"); return { d, dt: new Date(`${ano}-${mes}-${dia}`) }; })
       .filter(x => !isNaN(x.dt.getTime()) && x.dt >= hoje)
@@ -3214,7 +3252,7 @@ function getPrimaryDate(explicitDates, currentMessage, history = []) {
     if (futuras.length > 0) return futuras[0].d;
   }
   // fallback: mais recente no histórico que seja futura
-  const hoje = new Date();
+  const hoje = getDataBrasilia();
   const futuras = explicitDates
     .map(d => { const [dia,mes,ano] = d.split("/"); return { d, dt: new Date(`${ano}-${mes}-${dia}`) }; })
     .filter(x => {

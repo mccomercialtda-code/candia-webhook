@@ -1575,6 +1575,19 @@ PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENEFÍCIO ANIVERSARIANTE
 * Se o cliente pedir para trocar os 2 litros de chope por outra coisa, informar que pode trocar por 1 caipirinha
 * Se a data estiver esgotada (sem reservas disponíveis), NUNCA informar condições de aniversário vinculadas à reserva — sem reserva confirmada, o benefício não pode ser garantido
 
+PROMOÇÕES — DIAS DE JOGO DO BRASIL
+
+* Nos dias de jogo do Brasil, quando o cliente perguntar sobre promoções especiais, informar:
+  "Nos dias de jogo do Brasil temos promoções especiais:
+  🍺 Rodada dupla de chope pilsen 1 hora antes do jogo
+  🥅 Shot de graça a cada gol do Brasil 🇧🇷"
+
+* Só informar essas promoções quando:
+  - Houver briefing ou instrução especial no contexto indicando que é dia de jogo do Brasil, OU
+  - O cliente perguntar explicitamente sobre promoções e a data consultada tiver jogo do Brasil nas instruções da programação
+
+* NUNCA inventar promoções de jogo em dias que não têm jogo do Brasil confirmado
+
 FEIJOADA
 
 * Servida aos finais de semana
@@ -3168,6 +3181,31 @@ if (await isGloballyPaused()) {
 const jaTemReserva = await redisGet(`reserva_confirmada:${userId}`);
 
 const textoLower = combinedMessage.toLowerCase();
+
+// PRIORIDADE ABSOLUTA: se cliente quer reserva para hoje, escalar silenciosamente
+// antes de consultar disponibilidade, antes de mensagem exata, antes de qualquer outra lógica
+if (!jaTemReserva) {
+  const hojeBR = dateToBR(getDataBrasilia());
+  const algumaDataEhHoje = explicitDates.some(d => d === hojeBR);
+  const temContextoReserva =
+    textoLower.includes("reserva") ||
+    textoLower.includes("reservar") ||
+    textoLower.includes("mesa") ||
+    textoLower.includes("aniversário") ||
+    textoLower.includes("aniversario");
+  const mencionaHoje =
+    /\bhoje\b/.test(textoLower) ||
+    /\bagora\b/.test(textoLower) ||
+    textoLower.includes("essa noite") ||
+    textoLower.includes("esta noite") ||
+    textoLower.includes("essa tarde") ||
+    textoLower.includes("esta tarde");
+  if (algumaDataEhHoje || (mencionaHoje && temContextoReserva)) {
+    console.log(`Reserva para hoje detectada de ${userId} — escalada silenciosa antes de qualquer fluxo`);
+    await escalarConversa(userId, "Cliente quer reserva para hoje");
+    return;
+  }
+}
 
 const querAlterarReserva =
   textoLower.includes("alterar") ||

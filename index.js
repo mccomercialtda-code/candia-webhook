@@ -1552,12 +1552,18 @@ CARDÁPIO
 * Exceção única: feijoada promocional de sábado (R$20 até 14h) pode ser informada porque é uma promoção específica e divulgada
 * Exceções adicionais (só se o cliente perguntar explicitamente o preço): taça de vinho R$25, caldos R$19 — nunca mencionar valor espontaneamente
 
-CERVEJAS SEM ÁLCOOL
+CERVEJAS
 
-* Temos Heineken Zero e Verace IPA Zero disponíveis
-* Heineken Zero e Verace IPA Zero estão disponíveis durante todo o horário de funcionamento — nunca dizer que só estão disponíveis a partir de determinado horário
-* Só mencionar se o cliente perguntar
-* NUNCA dizer que não temos cerveja sem álcool
+* REFERÊNCIA INTERNA (NUNCA dizer isso ao cliente literalmente): trabalhamos com chope artesanal, algumas long necks, vinhos e drinks
+* NUNCA confirmar que temos Heineken regular, garrafa de 600ml, ou qualquer outra cerveja específica
+* Para qualquer pergunta sobre cervejas específicas (Heineken, Brahma, Skol, Original, 600ml, etc), responder: "Você pode conferir nossas opções de cerveja aqui nos destaques do nosso perfil 😊"
+* EXCEÇÃO — só pode confirmar diretamente se o cliente perguntar:
+  - Heineken Zero (sem álcool) — disponível, long neck
+  - Stella sem glúten — disponível, long neck
+* Heineken Zero e Stella sem glúten estão disponíveis durante todo o horário de funcionamento — nunca dizer que só estão disponíveis a partir de determinado horário
+* NUNCA dizer que não temos cerveja sem álcool — temos Heineken Zero
+* NUNCA dizer que não temos cerveja sem glúten — temos Stella sem glúten
+* Para qualquer outra opção de cerveja, sempre direcionar ao cardápio nos destaques do perfil
 
 VINHO E TAXA DE ROLHA
 
@@ -3969,24 +3975,8 @@ if (message && message.trim().toLowerCase() === "humano") {
 // só processa cancelamento se cliente já tem reserva confirmada — evita falsos positivos
 const temReservaParaCancelar = await redisGet(`reserva_confirmada:${senderId}`);
 if (detectCancelamento(message) && temReservaParaCancelar) {
-  console.log(`Cancelamento detectado de ${senderId}`);
-
-  const username = await redisGet(`ig_username:${senderId}`);
-  await notifyOwner(
-    `⚠️ Cliente quer cancelar reserva\nID: ${senderId}\n@${username || "sem_username"}`
-  );
-  // cancela reserva no Notion
-  cancelarReservaNoNotion(senderId).catch(err => console.error("Erro ao cancelar reserva no Notion:", err));
-  // limpa fila para evitar processamento de mensagens subsequentes
-  await clearPendingMessages(senderId);
-  await setDebounceToken(senderId, `cancelled_${Date.now()}`);
-  // evita echo
-  await redisSet(`echo_bot:${senderId}`, "1", 30);
-  await sendInstagramMessage(
-    senderId,
-    "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!"
-  );
-  await salvarUltimaRespostaBot(senderId, "Olá, tudo bem? Poxa que pena 🥹 Esperamos você em outra oportunidade. Obrigado por avisar!");
+  console.log(`Cancelamento detectado de ${senderId} — escalando silenciosamente sem responder`);
+  await escalarConversa(senderId, "Cliente quer cancelar reserva");
   return;
 }
 

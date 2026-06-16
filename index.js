@@ -2598,7 +2598,62 @@ if (cmd.startsWith("/liberar ")) {
     return;
   }
   
-if (cmd.startsWith("/data ")) {
+if (cmd.startsWith("/ajustar ")) {
+    const partes = raw.slice(9).trim().split(/\s+/);
+    const dataISO = parseDateFromCommand(partes[0]);
+    if (!dataISO) {
+      await notifyOwner("⚠️ Data inválida. Use: /ajustar DD/MM lugares=X horario=HH:MM | /ajustar DD/MM limpar");
+      return;
+    }
+
+    // /ajustar DD/MM limpar → remove o ajuste
+    if (partes[1]?.toLowerCase() === "limpar") {
+      await redisDel(`ajuste:${dataISO}`);
+      await notifyOwner(`✅ Ajuste removido para ${formatDateBR(dataISO)}`);
+      return;
+    }
+
+    // parseia pares chave=valor
+    const ajuste = {};
+    for (let i = 1; i < partes.length; i++) {
+      const eq = partes[i].indexOf("=");
+      if (eq <= 0) continue;
+      const chave = partes[i].slice(0, eq).toLowerCase();
+      const valor = partes[i].slice(eq + 1).trim();
+      if (!valor) continue;
+      if (chave === "lugares") {
+        const num = parseInt(valor);
+        if (!isNaN(num) && num > 0) ajuste.lugares = num;
+      } else if (chave === "horario" || chave === "horário") {
+        if (/^\d{1,2}(:\d{2})?$/.test(valor)) ajuste.horario = valor;
+      }
+    }
+
+    if (Object.keys(ajuste).length === 0) {
+      await notifyOwner(
+        "⚠️ Nenhum ajuste reconhecido. Use lugares=X e/ou horario=HH:MM\n" +
+        "Exemplo: /ajustar 20/06 lugares=10 horario=16:00"
+      );
+      return;
+    }
+
+    // mescla com ajuste existente (permite atualizar campos parciais)
+    const atualRaw = await redisGet(`ajuste:${dataISO}`);
+    let atual = {};
+    if (atualRaw) {
+      try { atual = JSON.parse(atualRaw); } catch {}
+    }
+    const novo = { ...atual, ...ajuste };
+    await redisSet(`ajuste:${dataISO}`, JSON.stringify(novo), 86400 * 60);
+
+    const linhas = [`✅ Ajuste salvo para ${formatDateBR(dataISO)}:`];
+    if (novo.lugares) linhas.push(`- Lugares: ${novo.lugares}`);
+    if (novo.horario) linhas.push(`- Horário limite: ${novo.horario}`);
+    await notifyOwner(linhas.join("\n"));
+    return;
+  }
+
+  if (cmd.startsWith("/data ")) {
     const parts = raw.slice(6).trim().split(" ");
     const dataISO = parseDateFromCommand(parts[0]);
     if (!dataISO) { await notifyOwner("⚠️ Data inválida. Use: /data DD/MM esg | ext | limpar | (ou só /data DD/MM para briefing)"); return; }
@@ -2617,7 +2672,8 @@ if (cmd.startsWith("/data ")) {
     if (acao === "limpar") {
       await clearOverride(dataISO);
       await redisDel(`regra_dia:${dataISO}`);
-      await notifyOwner(`✅ Override e briefing removidos para ${formatDateBR(dataISO)}.`);
+      await redisDel(`ajuste:${dataISO}`);
+      await notifyOwner(`✅ Override, briefing e ajuste removidos para ${formatDateBR(dataISO)}.`);
       return;
     }
 
@@ -2922,7 +2978,12 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
 /data DD/MM — Configura briefing para uma data
 /data DD/MM esg — Força ESGOTADO para uma data
 /data DD/MM ext — Força área EXTERNA para uma data
-/data DD/MM limpar — Remove override e briefing de uma data
+/data DD/MM limpar — Remove override, briefing e ajuste de uma data
+
+/ajustar DD/MM lugares=X horario=HH:MM — Sobrescreve limite de lugares e/ou horário para uma data
+/ajustar DD/MM lugares=X — Sobrescreve só lugares
+/ajustar DD/MM horario=HH:MM — Sobrescreve só horário
+/ajustar DD/MM limpar — Remove ajuste da data
 
 /pausar — Pausa o bot globalmente
 
@@ -3375,6 +3436,16 @@ if (jaTemReserva && disponibilidadeInfo.includes("ESGOTADA")) {
   disponibilidadeInfo = disponibilidadeInfo.replace(/.*ESGOTADA.*\n/g, "");
 }
 
+// busca ajuste manual de lugares/horário para a data
+let ajusteDia = null;
+if (dataISOConsulta) {
+  const ajusteRaw = await redisGet(`ajuste:${dataISOConsulta}`);
+  if (ajusteRaw) {
+    try { ajusteDia = JSON.parse(ajusteRaw); }
+    catch { ajusteDia = null; }
+  }
+}
+
 let systemPrompt = getSystemPrompt(
   disponibilidadeInfo || null,
   regrasDiaConsulta
@@ -3391,10 +3462,19 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   return;
 }
 
-if (regrasDiaConsulta?.briefing || programacaoConsulta) {
+if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
   systemPrompt += `\n\nATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA:\n`;
   if (regrasDiaConsulta?.briefing) {
     systemPrompt += `BRIEFING DO DIA: ${regrasDiaConsulta.briefing}\n`;
+  }
+  if (ajusteDia) {
+    if (ajusteDia.lugares) {
+      systemPrompt += `AJUSTE DO DIA — LIMITE DE LUGARES SENTADOS: ${ajusteDia.lugares} (sobrepõe o limite padrão do dia da semana APENAS para esta data)\n`;
+    }
+    if (ajusteDia.horario) {
+      systemPrompt += `AJUSTE DO DIA — HORÁRIO LIMITE DA RESERVA: ${ajusteDia.horario} (sobrepõe o horário padrão do dia da semana APENAS para esta data)\n`;
+    }
+    systemPrompt += `OBRIGATÓRIO: usar os valores de AJUSTE DO DIA acima em vez dos limites/horários padrão para esta data específica. NÃO alterar a mensagem exata do dia da semana — apenas substituir o número de lugares e o horário-limite quando aparecerem.\n`;
   }
   if (programacaoConsulta) {
     systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta.linhas}\n`;

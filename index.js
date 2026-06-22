@@ -339,6 +339,28 @@ async function salvarReservaNaNotion(data, instagramId) {
     return false;
   }
 
+  // Validação de data inválida ou placeholder — notifica mas grava mesmo assim
+  const dataStr = String(data.data || "");
+  const dataTemPlaceholder = dataStr.includes("DD") || dataStr.includes("MM") || dataStr.includes("AAAA") || dataStr.includes("AA");
+  const partesValidacao = dataStr.split("/");
+  const dataMalFormada =
+    !dataStr ||
+    partesValidacao.length !== 3 ||
+    partesValidacao.some(p => isNaN(parseInt(p)));
+  if (dataTemPlaceholder || dataMalFormada) {
+    console.error(`Reserva com data inválida: "${dataStr}" para ${instagramId}`);
+    await notifyOwner(
+      `⚠️ Reserva gravada com data INVÁLIDA!\n` +
+      `👤 Cliente: ${instagramId}\n` +
+      `📋 Nome: ${data.aniversariante || "—"}\n` +
+      `📅 Data inválida: ${dataStr || "(vazia)"}\n` +
+      `👥 Pessoas: ${data.total_esperado || "—"}\n` +
+      `📞 Contato: ${data.contato || "—"}\n\n` +
+      `Verifique e corrija manualmente.`
+    );
+    // segue o fluxo e tenta gravar mesmo assim (briefing pede para gravar)
+  }
+
   const properties = {
     "Nome": { title: [{ text: { content: data.aniversariante || "" } }] },
     "Data": { rich_text: [{ text: { content: convertDateToISO(data.data) } }] },
@@ -1600,6 +1622,8 @@ PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENEFÍCIO ANIVERSARIANTE
   🥃 Rodada de shot de cachaça a cada gol do Brasil por conta da casa"
 
 * Se o cliente pedir para trocar os 2 litros de chope por outra coisa, informar que pode trocar por 1 caipirinha
+* A cortesia de 2 litros de chope pode ser trocada por 1 caipirinha para clientes que não bebem chope
+* Informar essa opção apenas se o cliente mencionar que não bebe chope — nunca oferecer espontaneamente
 * Se a data estiver esgotada (sem reservas disponíveis), NUNCA informar condições de aniversário vinculadas à reserva — sem reserva confirmada, o benefício não pode ser garantido
 * NUNCA dizer "não temos promoções" ou "não temos condições especiais" — sempre informar pelo menos a cortesia de grupo + as promoções de jogo do Brasil
 
@@ -3300,11 +3324,20 @@ if (!jaTemReserva) {
     textoLower.includes("aniversario");
   const mencionaHoje =
     /\bhoje\b/.test(textoLower) ||
+    /\bhj\b/.test(textoLower) ||
     /\bagora\b/.test(textoLower) ||
+    textoLower.includes("agora mesmo") ||
     textoLower.includes("essa noite") ||
     textoLower.includes("esta noite") ||
+    textoLower.includes("hoje à noite") ||
+    textoLower.includes("hoje a noite") ||
+    textoLower.includes("hoje de noite") ||
     textoLower.includes("essa tarde") ||
-    textoLower.includes("esta tarde");
+    textoLower.includes("esta tarde") ||
+    textoLower.includes("hoje de tarde") ||
+    textoLower.includes("hoje à tarde") ||
+    textoLower.includes("hoje a tarde") ||
+    textoLower.includes("hoje cedo");
   if (algumaDataEhHoje || (mencionaHoje && temContextoReserva)) {
     console.log(`Reserva para hoje detectada de ${userId} — escalada silenciosa antes de qualquer fluxo`);
     await escalarConversa(userId, "Cliente quer reserva para hoje");
@@ -3504,6 +3537,11 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
   const ultimaRespostaBot = await getUltimaRespostaBot(userId);
   if (ultimaRespostaBot) {
     systemPrompt += `\nÚLTIMA MENSAGEM ENVIADA PELO BOT: ${ultimaRespostaBot}\n`;
+  }
+
+  // se já enviou a mensagem exata recentemente, NÃO reenviar — ir direto para coleta de dados
+  if (await redisGet(`msg_exata_enviada:${userId}`)) {
+    systemPrompt += `\nMENSAGEM EXATA JÁ FOI ENVIADA NESTA CONVERSA: a mensagem exata de sábado/sexta/domingo já foi enviada ao cliente. NUNCA reenviar a mensagem exata novamente nesta conversa. Continuar o fluxo: se o cliente confirmou ("sim", "bora", "pode ser" etc), pedir nome completo, telefone e previsão de convidados. Se o cliente perguntar outra coisa, responder normalmente sem repetir a mensagem exata.\n`;
   }
 
   // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento
@@ -3781,6 +3819,10 @@ if (escalation) {
 
   await markLastReply(userId, cleanReply);
   await redisSet(`echo_bot:${userId}`, "1", 180);
+  // se a resposta é uma das mensagens exatas (sábado/sexta/domingo), marca para não reenviar nas próximas trocas
+  if (cleanReply.includes("Será um prazer recebê-los aqui")) {
+    await redisSet(`msg_exata_enviada:${userId}`, "1", 3600);
+  }
   await sendInstagramMessage(userId, cleanReply);
   await salvarUltimaRespostaBot(userId, cleanReply);
 

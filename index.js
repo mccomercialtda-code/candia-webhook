@@ -2506,32 +2506,6 @@ async function handleTelegramCommand(text) {
   // /Ex DD/MM → força área externa
  
   
-if (cmd.startsWith("/liberar ")) {
-  const userId = raw.split(" ")[1]?.trim();
-  if (!userId) {
-    await notifyOwner("⚠️ Use: /liberar USER_ID");
-    return;
-  }
-
-  await redisDel(`paused:${userId}`);
-  await redisDel(`humano_encerrou:${userId}`);
-  await redisDel(`humano_informou:${userId}`);
-  await redisDel(`followup:${userId}`);
-  await redisDel(`debounce:${userId}`);
-  await limparConversaEscalada(userId);
-
-  // 👇 AGORA SIM (depois de liberar)
-  const pending = await getPendingMessages(userId);
-  if (pending.length > 0) {
-    const newToken = `${userId}_${Date.now()}`;
-    await setDebounceToken(userId, newToken);
-    processMessages(userId, newToken);
-  }
-
-  await notifyOwner(`✅ Usuário liberado: ${userId}`);
-  return;
-}
-
   if (cmd === "/pausar") {
     await redisSet("global:paused", "1", 86400 * 7);
     await notifyOwner("⏸️ Bot pausado globalmente. Nenhuma conversa será respondida até você enviar /reativar.");
@@ -2674,6 +2648,53 @@ if (cmd.startsWith("/ajustar ")) {
     if (novo.lugares) linhas.push(`- Lugares: ${novo.lugares}`);
     if (novo.horario) linhas.push(`- Horário limite: ${novo.horario}`);
     await notifyOwner(linhas.join("\n"));
+    return;
+  }
+
+  if (cmd === "/escalar" || cmd.startsWith("/escalar ")) {
+    const partes = raw.slice("/escalar".length).trim().split(/\s+/).filter(Boolean);
+
+    // sem args: lista todas as datas marcadas
+    if (partes.length === 0) {
+      try {
+        const res = await fetch(`${UPSTASH_URL}/keys/escalar_data:*`, {
+          headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+        });
+        const data = await res.json();
+        const keys = data.result || [];
+        if (keys.length === 0) {
+          await notifyOwner("📋 Nenhuma data marcada para escalar.");
+          return;
+        }
+        const datas = keys
+          .map(k => k.replace("escalar_data:", ""))
+          .sort()
+          .map(iso => `• ${formatDateBR(iso)}`)
+          .join("\n");
+        await notifyOwner(`📋 Datas marcadas para escalar:\n${datas}`);
+      } catch (err) {
+        await notifyOwner(`⚠️ Erro ao listar datas: ${err.message}`);
+      }
+      return;
+    }
+
+    const dataISO = parseDateFromCommand(partes[0]);
+    if (!dataISO) {
+      await notifyOwner("⚠️ Data inválida. Use: /escalar DD/MM | /escalar DD/MM/AAAA | /escalar DD/MM limpar");
+      return;
+    }
+
+    if (partes[1]?.toLowerCase() === "limpar") {
+      await redisDel(`escalar_data:${dataISO}`);
+      await notifyOwner(`✅ Marcador removido para ${formatDateBR(dataISO)}.`);
+      return;
+    }
+
+    await redisSet(`escalar_data:${dataISO}`, "1", 86400 * 60);
+    await notifyOwner(
+      `✅ Data ${formatDateBR(dataISO)} marcada para escalar\n` +
+      `Qualquer cliente que mencionar essa data será escalado silenciosamente.`
+    );
     return;
   }
 
@@ -2996,30 +3017,37 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
     await notifyOwner(
 `📋 Comandos disponíveis:
 
+▶️ ATIVAÇÃO / PAUSA
 /start — Reativa bot globalmente e libera fora do horário por 1h
-/start ID ou @username — Reativa usuário específico
+/start ID|@user — Reativa usuário específico (limpa pausa/escalada/follow-up) e libera fora do horário 1h
+/pausar — Pausa o bot globalmente (até 7 dias)
+/retomar — Despausa TODAS conversas pausadas e reprocessa filas
+/retomar ID|@user — Reinjeta a última mensagem do cliente e reprocessa (use quando o cliente já mandou mas o bot ignorou)
 
-/data DD/MM — Configura briefing para uma data
-/data DD/MM esg — Força ESGOTADO para uma data
-/data DD/MM ext — Força área EXTERNA para uma data
-/data DD/MM limpar — Remove override, briefing e ajuste de uma data
+📅 CONFIGURAÇÃO POR DATA
+/data DD/MM — Configura briefing livre para uma data (responda em seguida com o texto)
+/data DD/MM esg — Marca data como ESGOTADA
+/data DD/MM ext — Apenas área EXTERNA disponível
+/data DD/MM limpar — Remove override, briefing e ajuste da data
 
-/ajustar DD/MM lugares=X horario=HH:MM — Sobrescreve limite de lugares e/ou horário para uma data
-/ajustar DD/MM lugares=X — Sobrescreve só lugares
-/ajustar DD/MM horario=HH:MM — Sobrescreve só horário
-/ajustar DD/MM limpar — Remove ajuste da data
+/ajustar DD/MM lugares=X horario=HH:MM — Sobrescreve limite de lugares e/ou horário só para essa data
+/ajustar DD/MM lugares=X — Só lugares
+/ajustar DD/MM horario=HH:MM — Só horário
+/ajustar DD/MM limpar — Remove ajuste
 
-/pausar — Pausa o bot globalmente
+/escalar DD/MM[/AAAA] — Marca uma data: qualquer cliente que mencionar é escalado silenciosamente
+/escalar DD/MM limpar — Remove o marcador
+/escalar — Lista datas atualmente marcadas
 
+📊 STATUS / LIMPEZA
 /status — Mostra se o bot está ativo ou pausado
-/status DD/MM — Mostra disponibilidade de uma data
+/status DD/MM — Disponibilidade de uma data
+/limpar — Arquiva reservas antigas do Notion
 
-/limpar — Apaga reservas antigas do Notion
+📒 RESERVAS
+/reservar @user|ID — Extrai reserva do histórico e grava no Notion (pergunta dados faltantes por aqui)
+/marcarreserva @user|ID — Marca flag reserva_confirmada manualmente (sem gravar no Notion)
 
-/dia DD/MM — Configura briefing (legado, use /data)
-/reservar @username — Grava reserva a partir do histórico
-/marcarreserva @username — Marca flag de reserva manualmente
-/retomar ID — Retoma conversa reprocessando última mensagem
 /help — Mostra esta lista`
     );
     return;
@@ -3310,6 +3338,17 @@ if (await isGloballyPaused()) {
 const jaTemReserva = await redisGet(`reserva_confirmada:${userId}`);
 
 const textoLower = combinedMessage.toLowerCase();
+
+// PRIORIDADE MÁXIMA: se alguma data mencionada está marcada para escalar via /escalar
+// (usa extractExplicitDates que já resolve "amanhã", "essa sexta", "próximo sábado", etc.)
+for (const data of explicitDates) {
+  const iso = convertDateToISO(data);
+  if (await redisGet(`escalar_data:${iso}`)) {
+    console.log(`Data ${data} marcada para escalar — escalando ${userId} silenciosamente`);
+    await escalarConversa(userId, `Data marcada para escalar: ${data}`);
+    return;
+  }
+}
 
 // PRIORIDADE ABSOLUTA: se cliente quer reserva para hoje, escalar silenciosamente
 // antes de consultar disponibilidade, antes de mensagem exata, antes de qualquer outra lógica

@@ -3429,7 +3429,7 @@ const querAlterarReserva =
       }
       console.log(`Disponibilidade para ${data}:`, disp);
       if (disp.tipo === "esgotado") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): ESGOTADA — sem vagas disponíveis.\n`;
+        disponibilidadeInfo += `⚠️ ATENÇÃO: As reservas para ${data} (${disp.diaSemana}) estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
       } else if (disp.tipo === "descoberto") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, porém apenas área descoberta (calçada, ao ar livre) — área coberta esgotada. (${disp.vagasDescoberto} vagas restantes).\n`;
       } else if (disp.tipo === "coberto") {
@@ -3489,6 +3489,15 @@ if (!dataPrincipal && jaTemReserva) {
   }
 }
 
+// 3ª fonte: data da última mensagem exata enviada (sábado/sexta/domingo) — útil para follow-ups
+if (!dataPrincipal) {
+  const dataMsgExata = await redisGet(`msg_exata_data:${userId}`);
+  if (dataMsgExata) {
+    dataPrincipal = dataMsgExata;
+    console.log(`Sem data na msg — usando data da mensagem exata recente (${dataMsgExata}) para ${userId}`);
+  }
+}
+
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 const regrasDiaConsulta = dataISOConsulta
@@ -3501,6 +3510,19 @@ if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
   console.log(`Programação conteúdo:`, programacaoConsulta);
   console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? `encontrada${programacaoConsulta.especial ? " (especial)" : ""}` : "não encontrada"}`);
+}
+
+// Se a data veio de fallback (reserva/msg exata) e não foi consultada no loop acima,
+// verificar disponibilidade e injetar alerta se esgotada
+if (dataPrincipal && !explicitDates.includes(dataPrincipal) && !jaTemReserva) {
+  try {
+    const dispFallback = await verificarDisponibilidade(dataPrincipal);
+    if (dispFallback.tipo === "esgotado") {
+      disponibilidadeInfo += `\n⚠️ ATENÇÃO: As reservas para ${dataPrincipal} estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
+    }
+  } catch (err) {
+    console.error(`Erro ao verificar disponibilidade fallback para ${dataPrincipal}:`, err);
+  }
 }
 
 // não injeta esgotado se cliente já tem reserva
@@ -3861,6 +3883,10 @@ if (escalation) {
   // se a resposta é uma das mensagens exatas (sábado/sexta/domingo), marca para não reenviar nas próximas trocas
   if (cleanReply.includes("Será um prazer recebê-los aqui")) {
     await redisSet(`msg_exata_enviada:${userId}`, "1", 3600);
+    // guarda a data que disparou a mensagem exata para usar como fallback em follow-ups
+    if (dataPrincipal) {
+      await redisSet(`msg_exata_data:${userId}`, dataPrincipal, 3600);
+    }
   }
   await sendInstagramMessage(userId, cleanReply);
   await salvarUltimaRespostaBot(userId, cleanReply);

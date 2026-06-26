@@ -3350,6 +3350,47 @@ for (const data of explicitDates) {
   }
 }
 
+// Fallback: cliente menciona um dia da semana (sem data específica) e existe
+// uma data marcada para escalar nesse mesmo dia da semana nos próximos 60 dias
+// → escala silenciosamente. Cobre casos como "abre segunda?" quando há /escalar 29/06.
+try {
+  const resEsc = await fetch(`${UPSTASH_URL}/keys/escalar_data:*`, {
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+  });
+  const dataEsc = await resEsc.json();
+  const keysEsc = dataEsc.result || [];
+  if (keysEsc.length > 0) {
+    const diasMencionados = {
+      segunda: /\b(segunda|seg)\b/.test(textoLower),
+      terça:   /\b(terça|terca|ter)\b/.test(textoLower),
+      quarta:  /\b(quarta|qua)\b/.test(textoLower),
+      quinta:  /\b(quinta|qui)\b/.test(textoLower),
+      sexta:   /\b(sexta|sex)\b/.test(textoLower),
+      sábado:  /\b(sábado|sabado|sab)\b/.test(textoLower),
+      domingo: /\b(domingo|dom)\b/.test(textoLower),
+    };
+    const algumMencionado = Object.values(diasMencionados).some(v => v);
+    if (algumMencionado) {
+      const hojeRef = getDataBrasilia();
+      for (const key of keysEsc) {
+        const iso = key.replace("escalar_data:", "");
+        const dataEscBR = formatDateBR(iso);
+        const diaEsc = getDiaSemana(dataEscBR);
+        if (!diasMencionados[diaEsc]) continue;
+        const [diaN, mesN, anoN] = dataEscBR.split("/");
+        const dt = new Date(`${anoN}-${mesN}-${diaN}T00:00:00-03:00`);
+        const dias = (dt - hojeRef) / (1000 * 60 * 60 * 24);
+        if (dias < 0 || dias > 60) continue;
+        console.log(`Cliente mencionou "${diaEsc}" e existe escalar_data para ${dataEscBR} — escalando ${userId} silenciosamente`);
+        await escalarConversa(userId, `Cliente mencionou ${diaEsc}; data marcada para escalar: ${dataEscBR}`);
+        return;
+      }
+    }
+  }
+} catch (err) {
+  console.error("Erro ao consultar escalar_data:* para fallback por dia-da-semana:", err);
+}
+
 // PRIORIDADE ABSOLUTA: se cliente quer reserva para hoje, escalar silenciosamente
 // antes de consultar disponibilidade, antes de mensagem exata, antes de qualquer outra lógica
 if (!jaTemReserva) {

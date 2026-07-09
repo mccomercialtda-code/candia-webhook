@@ -1431,6 +1431,9 @@ REGRA GERAL
 * Se o cliente não perguntar diretamente por reserva, pode oferecer — mas somente uma vez. Não ofereça em todas as mensagens
 * NUNCA inventar ou usar blocos de comando como [CONSULTAR_DISPONIBILIDADE:] ou qualquer outro bloco não definido — esses blocos não existem no sistema e serão enviados ao cliente como texto. Os únicos blocos válidos são [RESERVA:...] e [ESCALAR:...]
 * Se a disponibilidade de uma data não estiver no contexto, responder normalmente — o sistema já verificou antes de chamar o Claude
+* Antes de explicar condições (área externa, horário limite, número de lugares), verificar se essa informação já foi dada e confirmada na mesma conversa
+* Se o cliente já confirmou uma condição ("pode ser área externa", "tudo bem", "ok"), não repetir essa condição nas mensagens seguintes
+* Ir direto ao próximo passo do fluxo sem reexplicar o que já foi aceito
 
 CONTEXTO DO CLIENTE (OBRIGATÓRIO)
 
@@ -1892,6 +1895,11 @@ FLUXO GENÉRICO (PARA TER/QUA/QUI — NÃO USAR EM SEXTA, SÁBADO OU DOMINGO)
 ────────────────
 REGRAS GERAIS DO FLUXO (APLICAM-SE A TODOS OS DIAS)
 ────────────────
+
+* Antes de pedir qualquer dado, verificar o histórico COMPLETO da conversa — incluindo resumos de atendentes anteriores e mensagens marcadas [atendente] — para aproveitar nome, telefone, data e número de pessoas já fornecidos
+* Quando o histórico já contiver todos os dados necessários (nome completo, telefone, data, número de pessoas) e o cliente enviar uma confirmação ("ok", "pode reservar", "sim", "pode", "bora", "quero", "confirma", "pode fazer", "vamos", "pode ser", "beleza", "combinado", "fechado"), gerar o bloco [RESERVA] imediatamente, sem pedir mais nada
+* Dados fornecidos em resumos de atendimento humano são válidos — não pedir novamente
+* NUNCA pedir um dado que já foi fornecido anteriormente na mesma conversa
 
 * MODELO OBRIGATÓRIO DA MENSAGEM DE CONFIRMAÇÃO DE RESERVA (qualquer dia da semana):
 
@@ -3648,6 +3656,34 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
   // se já enviou a mensagem exata recentemente, NÃO reenviar — ir direto para coleta de dados
   if (await redisGet(`msg_exata_enviada:${userId}`)) {
     systemPrompt += `\nMENSAGEM EXATA JÁ FOI ENVIADA NESTA CONVERSA: a mensagem exata de sábado/sexta/domingo já foi enviada ao cliente. NUNCA reenviar a mensagem exata novamente nesta conversa. Continuar o fluxo: se o cliente confirmou ("sim", "bora", "pode ser" etc), pedir nome completo, telefone e previsão de convidados. Se o cliente perguntar outra coisa, responder normalmente sem repetir a mensagem exata.\n`;
+  }
+
+  // detecta se a mensagem atual é uma confirmação e ainda não há reserva gravada
+  const palavrasConfirmacao = [
+    "sim", "ok", "pode", "bora", "quero", "confirma", "pode reservar",
+    "pode fazer", "vamos", "pode ser", "tá bom", "ta bom", "beleza",
+    "combinado", "fechado", "pode sim", "claro", "com certeza"
+  ];
+  const msgConfirmacaoLower = combinedMessage.toLowerCase().trim();
+  const mensagemEhConfirmacao =
+    msgConfirmacaoLower.length > 0 &&
+    (
+      palavrasConfirmacao.some(p => msgConfirmacaoLower === p) ||
+      (msgConfirmacaoLower.length <= 40 && palavrasConfirmacao.some(p => msgConfirmacaoLower.includes(p)))
+    );
+  if (mensagemEhConfirmacao && !jaTemReserva) {
+    systemPrompt += `\n\nATENÇÃO CRÍTICA — TENTATIVA DE FECHAMENTO DE RESERVA:
+O cliente acabou de enviar uma mensagem de confirmação e ainda não há reserva gravada. Analise o histórico COMPLETO desta conversa (incluindo mensagens marcadas como [atendente] e o RESUMO DA CONVERSA se existir) e verifique se todos os dados obrigatórios da reserva estão presentes:
+- Nome completo do aniversariante
+- Telefone (com DDD, apenas dígitos)
+- Data (DD/MM/AAAA)
+- Número de pessoas (total_esperado)
+
+Regras OBRIGATÓRIAS:
+1. Se TODOS os 4 dados obrigatórios estiverem no histórico, gere IMEDIATAMENTE a mensagem de confirmação padrão + o bloco [RESERVA: ...] com esses dados. NÃO pergunte novamente nenhum dado que já foi dado antes.
+2. Se algum dos 4 dados estiver ausente, pergunte APENAS o dado que falta. NUNCA repetir dados já fornecidos.
+3. Dados fornecidos por atendente humano ou em RESUMO DA CONVERSA são válidos e NÃO devem ser reperguntados.
+4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.\n`;
   }
 
   // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento

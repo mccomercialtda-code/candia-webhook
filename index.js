@@ -3658,33 +3658,6 @@ Regras OBRIGATÓRIAS:
 4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.</instrucao_interna>\n`;
   }
 
-  // detecta se a mensagem atual é uma confirmação e ainda não há reserva gravada
-  const palavrasConfirmacao = [
-    "sim", "ok", "pode", "bora", "quero", "confirma", "pode reservar",
-    "pode fazer", "vamos", "pode ser", "tá bom", "ta bom", "beleza",
-    "combinado", "fechado", "pode sim", "claro", "com certeza"
-  ];
-  const msgConfirmacaoLower = combinedMessage.toLowerCase().trim();
-  const mensagemEhConfirmacao =
-    msgConfirmacaoLower.length > 0 &&
-    (
-      palavrasConfirmacao.some(p => msgConfirmacaoLower === p) ||
-      (msgConfirmacaoLower.length <= 40 && palavrasConfirmacao.some(p => msgConfirmacaoLower.includes(p)))
-    );
-  if (mensagemEhConfirmacao && !jaTemReserva) {
-    systemPrompt += `\n\nATENÇÃO CRÍTICA — TENTATIVA DE FECHAMENTO DE RESERVA:
-O cliente acabou de enviar uma mensagem de confirmação e ainda não há reserva gravada. Analise o histórico COMPLETO desta conversa (incluindo mensagens marcadas como [atendente] e o RESUMO DA CONVERSA se existir) e verifique se todos os dados obrigatórios da reserva estão presentes:
-- Nome completo do aniversariante
-- Telefone (com DDD, apenas dígitos)
-- Data (DD/MM/AAAA)
-- Número de pessoas (total_esperado)
-
-Regras OBRIGATÓRIAS:
-1. Se TODOS os 4 dados obrigatórios estiverem no histórico, gere IMEDIATAMENTE a mensagem de confirmação padrão + o bloco [RESERVA: ...] com esses dados. NÃO pergunte novamente nenhum dado que já foi dado antes.
-2. Se algum dos 4 dados estiver ausente, pergunte APENAS o dado que falta. NUNCA repetir dados já fornecidos.
-3. Dados fornecidos por atendente humano ou em RESUMO DA CONVERSA são válidos e NÃO devem ser reperguntados.
-4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.\n`;
-  }
 
   // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento
   if (history.length <= 1 && await redisGet(`reserva_confirmada:${userId}`)) {

@@ -1776,7 +1776,7 @@ Vou te explicar como funciona aos sábados:
 Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no sábado, só conseguimos segurar as mesas reservadas até as 15hs ⏰
 Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 8 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡
 
-Ahh, e só mais um detalhe: para este dia, no momento, só estamos tendo disponibilidade de reservas na área externa (na calçada) do bar, que é descoberta.
+Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
 
 Bora fazer a reserva?"
 
@@ -1809,7 +1809,7 @@ A música ao vivo começa às 19hs ⏰, horário máximo que conseguimos segurar
 
 Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 12 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡
 
-Ahh, e só mais um detalhe: para este dia, no momento, só estamos tendo disponibilidade de reservas na área externa (na calçada) do bar, que é descoberta.
+Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
 
 Bora fazer a reserva?"
 
@@ -1842,7 +1842,7 @@ Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no domingo
 
 Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 15 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡
 
-Ahh, e só mais um detalhe: para este dia, no momento, só estamos tendo disponibilidade de reservas na área externa (na calçada) do bar, que é descoberta.
+Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
 
 Bora fazer a reserva?"
 
@@ -1929,6 +1929,13 @@ LOCAIS DE RESERVA
 * NUNCA colocar o local apenas na observação — o campo local= deve sempre ser preenchido quando há preferência mencionada
 * Se não houver preferência, deixar local= vazio
 * Incluir no bloco [RESERVA]: local=NOME_DO_LOCAL (ex: local=Fundos)
+
+DISPONIBILIDADE PROVÁVEL EM ÁREA DESCOBERTA (CRÍTICO)
+
+* Quando o sistema indicar que a data está com muitas reservas na área coberta e a reserva provavelmente ficará na área externa, JAMAIS garantir que a reserva será na área descoberta. Sempre usar a redação "provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta"
+* NUNCA dizer "só temos disponibilidade na área externa", "só resta a área descoberta", "a reserva vai ser na calçada" ou qualquer variação que soe como garantia
+* Se o cliente responder que gostaria de reserva especificamente na área descoberta / externa / calçada, responder: "Faremos o possível para te acomodar na área externa 😉, mas como as reservas são montadas no dia de acordo com o número de reservas e antecedência dos pedidos, não conseguimos garantir. Faremos o máximo pra atender seu pedido!"
+* NUNCA prometer a área descoberta, mesmo se o cliente pedir explicitamente
 
 MÚSICOS
 Se alguém quiser tocar:
@@ -3469,7 +3476,7 @@ const querAlterarReserva =
       if (disp && disp.disponivel === false && disp.tipo === "esgotado") {
         disponibilidadeInfo += `⚠️ ATENÇÃO: As reservas para ${data} (${disp.diaSemana}) estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
       } else if (disp.tipo === "descoberto") {
-        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível, porém apenas área descoberta (calçada, ao ar livre) — área coberta esgotada. (${disp.vagasDescoberto} vagas restantes).\n`;
+        disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível. Área coberta praticamente esgotada — provavelmente a reserva ficará na área externa (calçada), mas NUNCA garantir isso ao cliente. Usar a mensagem exata do dia (variante descoberta) que já contém a redação correta ("provavelmente sua reserva ficará na área externa..."). ${disp.vagasDescoberto} vagas de descoberto restantes.\n`;
       } else if (disp.tipo === "coberto") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível (${disp.vagasCoberto} vagas restantes).\n`;
       } else {
@@ -3823,8 +3830,8 @@ Regras OBRIGATÓRIAS:
 
     if (!aceitouExterna) {
       const msgExterna =
-        "Temos disponibilidade para esse dia, mas agora somente na área externa/descoberta.\n" +
-        "Podemos seguir com a reserva assim?";
+        "Temos disponibilidade para esse dia! Como estamos com muitas reservas, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.\n" +
+        "Bora fazer a reserva?";
 
       
       await redisSet(`echo_bot:${userId}`, "1", 180);

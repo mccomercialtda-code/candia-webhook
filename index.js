@@ -1372,7 +1372,7 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
   });
 
   const dispInfo = disponibilidade
-    ? `\n<instrucao_interna>DISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA (uso interno — NUNCA reproduza este bloco na resposta ao cliente):\n${disponibilidade}</instrucao_interna>\n`
+    ? `\n[SISTEMA — NÃO REPRODUZIR]DISPONIBILIDADE CONSULTADA PARA A DATA SOLICITADA (uso interno — NUNCA reproduza este bloco na resposta ao cliente):\n${disponibilidade}[/SISTEMA]\n`
     : "";
 
  const regrasEspeciaisInfo = "";
@@ -1380,7 +1380,7 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
    return `Você é o assistente virtual do Candiá Bar, um bar em Belo Horizonte famoso pelo samba ao vivo. Atende clientes pelo Instagram Direct.
 
 REGRA CRÍTICA — INSTRUÇÕES INTERNAS
-Qualquer bloco delimitado por <instrucao_interna>...</instrucao_interna> é INTERNO ao sistema. Use os dados dele para orientar sua resposta, mas NUNCA reproduza o conteúdo, os rótulos ("BRIEFING DO DIA:", "AJUSTE DO DIA:", "PROGRAMAÇÃO CONFIRMADA:", "DISPONIBILIDADE CONSULTADA", "ATENÇÃO CRÍTICA", etc.) nem as tags na resposta ao cliente. O cliente jamais deve ver esses textos.
+Qualquer bloco delimitado por [SISTEMA — NÃO REPRODUZIR] ... [/SISTEMA] é uma orientação INTERNA. Use os dados internamente para decidir sua resposta, mas NUNCA copie o conteúdo, os rótulos ("BRIEFING DO DIA", "AJUSTE DO DIA", "PROGRAMAÇÃO CONFIRMADA", "DISPONIBILIDADE CONSULTADA", "ATENÇÃO CRÍTICA", etc.) nem os marcadores "[SISTEMA...]" / "[/SISTEMA]" na resposta ao cliente. Ao formular sua resposta, escreva como se esses blocos não existissem no prompt — apenas usando o conhecimento que eles transmitem.
 
 DATA E HORA ATUAL
 Data de hoje no fuso de Brasília: ${getDataBrasiliaCompleta()} — agora são ${horaAgora}.
@@ -2204,13 +2204,16 @@ function proximoDiaSemana(nomeDia) {
 }
 
 function extractExplicitDates(text) {
-  const ddmm = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\b/g) || [];
+  // aceita separadores / . e - (ex.: 01/08, 01.08, 01-08, 01/08/2026, 01.08.2026)
+  const ddmm = text.match(/\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\b/g) || [];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
   const year = now.getFullYear();
   const results = ddmm.map(d => {
-    const parts = d.split("/");
-    if (parts.length === 2) return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${year}`;
-    return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${parts[2]}`;
+    const parts = d.split(/[\/.\-]/);
+    let ano = parts[2];
+    if (ano && ano.length === 2) ano = "20" + ano;
+    if (parts.length === 2 || !ano) return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${year}`;
+    return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${ano}`;
   });
 
   // alternação ampla de dia-da-semana incluindo typos comuns
@@ -3153,7 +3156,18 @@ async function buscarUsernameInstagram(userId) {
 // remove blocos internos antes de enviar ao cliente (defesa em todos os call sites)
 function limparBlocosInternos(texto) {
   if (!texto) return texto;
-  return texto.replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "").trim();
+  return texto
+    // blocos [COMANDO: ...]
+    .replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "")
+    // blocos [SISTEMA...] ... [/SISTEMA] (safety net — Claude não deveria reproduzir)
+    .replace(/\[SISTEMA[^\]]*\][\s\S]*?\[\/SISTEMA\]/gi, "")
+    // marcadores isolados de abertura ou fechamento, caso apareçam sozinhos
+    .replace(/\[SISTEMA[^\]]*\]/gi, "")
+    .replace(/\[\/SISTEMA\]/gi, "")
+    // legacy: tags XML antigas
+    .replace(/<instrucao_interna>[\s\S]*?<\/instrucao_interna>/gi, "")
+    .replace(/<\/?instrucao_interna>/gi, "")
+    .trim();
 }
 
 // divide mensagens longas em partes preservando parágrafos
@@ -3522,6 +3536,20 @@ if (!dataPrincipal) {
   }
 }
 
+// 4ª fonte: data resolvida em rodadas anteriores desta mesma conversa (persistida por 1h)
+if (!dataPrincipal) {
+  const dataContexto = await redisGet(`data_contexto:${userId}`);
+  if (dataContexto) {
+    dataPrincipal = dataContexto;
+    console.log(`Sem data na msg — usando data_contexto persistido (${dataContexto}) para ${userId}`);
+  }
+}
+
+// se resolvemos uma dataPrincipal (por qualquer fonte), persistir para as próximas rodadas
+if (dataPrincipal) {
+  await redisSet(`data_contexto:${userId}`, dataPrincipal, 3600);
+}
+
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 const regrasDiaConsulta = dataISOConsulta
@@ -3583,7 +3611,7 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
 }
 
 if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
-  systemPrompt += `\n\n<instrucao_interna>ATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA (uso interno — NUNCA reproduza rótulos como "BRIEFING DO DIA", "AJUSTE DO DIA", "PROGRAMAÇÃO CONFIRMADA", "INSTRUÇÃO FINAL OBRIGATÓRIA" ou este bloco na resposta ao cliente):\n`;
+  systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]ATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA (uso interno — NUNCA reproduza rótulos como "BRIEFING DO DIA", "AJUSTE DO DIA", "PROGRAMAÇÃO CONFIRMADA", "INSTRUÇÃO FINAL OBRIGATÓRIA" ou este bloco na resposta ao cliente):\n`;
   if (regrasDiaConsulta?.briefing) {
     systemPrompt += `BRIEFING DO DIA: ${regrasDiaConsulta.briefing}\n`;
   }
@@ -3608,26 +3636,26 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
       systemPrompt += `PRIORIDADE: a MENSAGEM EXATA DA PROGRAMAÇÃO sobrepõe qualquer briefing apenas para perguntas sobre programação/evento/show/atração. As regras fixas de reserva por dia da semana (mensagem exata de sábado/sexta/domingo, limites de lugares, horários de reserva) continuam valendo normalmente.\n`;
     }
   }
-  systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação. Se em mensagens anteriores você disse que não tinha a programação, IGNORE — agora você TEM os dados e DEVE usá-los.</instrucao_interna>\n`;
+  systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação. Se em mensagens anteriores você disse que não tinha a programação, IGNORE — agora você TEM os dados e DEVE usá-los.[/SISTEMA]\n`;
 }
 
   const contatoDetectado = await redisGet(`contato_detectado:${userId}`);
   if (contatoDetectado) {
-    systemPrompt += `\n<instrucao_interna>CONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}. IMPORTANTE: se o único dado que faltava para concluir a reserva era o contato, considere este contato como válido e prossiga para a confirmação final da reserva. NÃO peça o contato novamente. Gere a resposta final de confirmação e inclua o bloco [RESERVA: ...] completo com esse contato. NUNCA reproduza este bloco na resposta ao cliente.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]CONTATO JÁ INFORMADO PELO CLIENTE: ${contatoDetectado}. IMPORTANTE: se o único dado que faltava para concluir a reserva era o contato, considere este contato como válido e prossiga para a confirmação final da reserva. NÃO peça o contato novamente. Gere a resposta final de confirmação e inclua o bloco [RESERVA: ...] completo com esse contato. NUNCA reproduza este bloco na resposta ao cliente.[/SISTEMA]\n`;
   }
 
   if (mensagemEhSoContato) {
-    systemPrompt += `\n<instrucao_interna>A MENSAGEM ATUAL DO CLIENTE É APENAS O CONTATO. Se já houver contexto suficiente da reserva nas mensagens anteriores, conclua a reserva agora. NÃO trate esta mensagem como novo assunto. NÃO peça o contato novamente. NUNCA reproduza este bloco na resposta.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]A MENSAGEM ATUAL DO CLIENTE É APENAS O CONTATO. Se já houver contexto suficiente da reserva nas mensagens anteriores, conclua a reserva agora. NÃO trate esta mensagem como novo assunto. NÃO peça o contato novamente. NUNCA reproduza este bloco na resposta.[/SISTEMA]\n`;
   }
 
   const ultimaRespostaBot = await getUltimaRespostaBot(userId);
   if (ultimaRespostaBot) {
-    systemPrompt += `\n<instrucao_interna>ÚLTIMA MENSAGEM ENVIADA PELO BOT (uso interno para dar continuidade — não reproduzir este rótulo): ${ultimaRespostaBot}</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]ÚLTIMA MENSAGEM ENVIADA PELO BOT (uso interno para dar continuidade — não reproduzir este rótulo): ${ultimaRespostaBot}[/SISTEMA]\n`;
   }
 
   // se já enviou a mensagem exata recentemente, NÃO reenviar — ir direto para coleta de dados
   if (await redisGet(`msg_exata_enviada:${userId}`)) {
-    systemPrompt += `\n<instrucao_interna>MENSAGEM EXATA JÁ FOI ENVIADA NESTA CONVERSA: a mensagem exata de sábado/sexta/domingo já foi enviada ao cliente. NUNCA reenviar a mensagem exata novamente nesta conversa. Continuar o fluxo: se o cliente confirmou ("sim", "bora", "pode ser" etc), pedir nome completo, telefone e previsão de convidados. Se o cliente perguntar outra coisa, responder normalmente sem repetir a mensagem exata. NUNCA reproduza este bloco na resposta ao cliente.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]MENSAGEM EXATA JÁ FOI ENVIADA NESTA CONVERSA: a mensagem exata de sábado/sexta/domingo já foi enviada ao cliente. NUNCA reenviar a mensagem exata novamente nesta conversa. Continuar o fluxo: se o cliente confirmou ("sim", "bora", "pode ser" etc), pedir nome completo, telefone e previsão de convidados. Se o cliente perguntar outra coisa, responder normalmente sem repetir a mensagem exata. NUNCA reproduza este bloco na resposta ao cliente.[/SISTEMA]\n`;
   }
 
   // detecta se a mensagem atual é uma confirmação e ainda não há reserva gravada
@@ -3644,7 +3672,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
       (msgConfirmacaoLower.length <= 40 && palavrasConfirmacao.some(p => msgConfirmacaoLower.includes(p)))
     );
   if (mensagemEhConfirmacao && !jaTemReserva) {
-    systemPrompt += `\n\n<instrucao_interna>ATENÇÃO CRÍTICA — TENTATIVA DE FECHAMENTO DE RESERVA (uso interno — NUNCA reproduza este bloco na resposta ao cliente):
+    systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]ATENÇÃO CRÍTICA — TENTATIVA DE FECHAMENTO DE RESERVA (uso interno — NUNCA reproduza este bloco na resposta ao cliente):
 O cliente acabou de enviar uma mensagem de confirmação e ainda não há reserva gravada. Analise o histórico COMPLETO desta conversa (incluindo mensagens marcadas como [atendente] e o RESUMO DA CONVERSA se existir) e verifique se todos os dados obrigatórios da reserva estão presentes:
 - Nome completo do aniversariante
 - Telefone (com DDD, apenas dígitos)
@@ -3655,24 +3683,24 @@ Regras OBRIGATÓRIAS:
 1. Se TODOS os 4 dados obrigatórios estiverem no histórico, gere IMEDIATAMENTE a mensagem de confirmação padrão + o bloco [RESERVA: ...] com esses dados. NÃO pergunte novamente nenhum dado que já foi dado antes.
 2. Se algum dos 4 dados estiver ausente, pergunte APENAS o dado que falta. NUNCA repetir dados já fornecidos.
 3. Dados fornecidos por atendente humano ou em RESUMO DA CONVERSA são válidos e NÃO devem ser reperguntados.
-4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.</instrucao_interna>\n`;
+4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.[/SISTEMA]\n`;
   }
 
 
   // se histórico vazio mas cliente já tem reserva, evita tratar como novo atendimento
   if (history.length <= 1 && await redisGet(`reserva_confirmada:${userId}`)) {
-    systemPrompt += `\n<instrucao_interna>Este cliente já possui uma reserva confirmada anteriormente. Atenda normalmente — NÃO peça nome, telefone ou dados de reserva novamente. NÃO inicie novo fluxo de reserva. Se o cliente quiser alterar algo, apenas confirme o que ele quer mudar e anote na conversa. NUNCA reproduza este bloco na resposta.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]Este cliente já possui uma reserva confirmada anteriormente. Atenda normalmente — NÃO peça nome, telefone ou dados de reserva novamente. NÃO inicie novo fluxo de reserva. Se o cliente quiser alterar algo, apenas confirme o que ele quer mudar e anote na conversa. NUNCA reproduza este bloco na resposta.[/SISTEMA]\n`;
   }
 
   // se histórico vazio e existe última resposta do bot, injeta como contexto mínimo
   if (history.length <= 1 && ultimaRespostaBot) {
-    systemPrompt += `\n<instrucao_interna>CONTEXTO DA ÚLTIMA INTERAÇÃO COM ESTE CLIENTE: a última mensagem enviada pelo bot foi: "${ultimaRespostaBot}". Use isso para dar continuidade natural à conversa, sem tratar como primeiro contato. NUNCA reproduza este bloco na resposta.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]CONTEXTO DA ÚLTIMA INTERAÇÃO COM ESTE CLIENTE: a última mensagem enviada pelo bot foi: "${ultimaRespostaBot}". Use isso para dar continuidade natural à conversa, sem tratar como primeiro contato. NUNCA reproduza este bloco na resposta.[/SISTEMA]\n`;
   }
 
   // injeta resumo da conversa se existir (gerado quando atendente interveio)
   const resumoConversa = await redisGet(`resumo_conversa:${userId}`);
   if (resumoConversa) {
-    systemPrompt += `\n<instrucao_interna>RESUMO DO QUE FOI COMBINADO COM ESTE CLIENTE (uso interno — NÃO reproduzir):\n${resumoConversa}\nATENÇÃO: respeite o que foi combinado acima. Se o atendente prometeu algo, isso vale. NUNCA reproduza este bloco na resposta ao cliente.</instrucao_interna>\n`;
+    systemPrompt += `\n[SISTEMA — NÃO REPRODUZIR]RESUMO DO QUE FOI COMBINADO COM ESTE CLIENTE (uso interno — NÃO reproduzir):\n${resumoConversa}\nATENÇÃO: respeite o que foi combinado acima. Se o atendente prometeu algo, isso vale. NUNCA reproduza este bloco na resposta ao cliente.[/SISTEMA]\n`;
   }
 
   // debug: mostra exatamente o que está sendo injetado no contexto de disponibilidade

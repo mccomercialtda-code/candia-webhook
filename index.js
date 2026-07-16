@@ -3432,18 +3432,31 @@ try {
 // PRIORIDADE ABSOLUTA: se cliente quer reserva para hoje, escalar silenciosamente
 // antes de consultar disponibilidade, antes de mensagem exata, antes de qualquer outra lógica
 if (!jaTemReserva) {
-  const hojeBR = dateToBR(getDataBrasilia());
-  const algumaDataEhHoje = explicitDates.some(d => d === hojeBR);
+  const hojeBRAtual = dateToBR(getDataBrasilia());
+  const algumaDataEhHoje = explicitDates.some(d => d === hojeBRAtual);
+
+  // guard: se cliente mencionou EXPLICITAMENTE alguma data futura, ele não quer "hoje"
+  // (expressões como "sabado agora" = próximo sábado, não "hoje")
+  const hojeDate = getDataBrasilia();
+  const temDataFuturaExplicita = explicitDates.some(d => {
+    if (d === hojeBRAtual) return false;
+    const [dia, mes, ano] = d.split("/");
+    const dt = new Date(`${ano}-${mes}-${dia}T00:00:00-03:00`);
+    return !isNaN(dt.getTime()) && dt > hojeDate;
+  });
+
   const temContextoReserva =
     textoLower.includes("reserva") ||
     textoLower.includes("reservar") ||
     textoLower.includes("mesa") ||
     textoLower.includes("aniversário") ||
     textoLower.includes("aniversario");
+
+  // "agora" isolado é ambíguo ("sabado agora", "sexta agora" = próximo X, não hoje)
+  // Só considerar "agora" quando aparece nas formas compostas explícitas ("agora mesmo").
   const mencionaHoje =
     /\bhoje\b/.test(textoLower) ||
     /\bhj\b/.test(textoLower) ||
-    /\bagora\b/.test(textoLower) ||
     textoLower.includes("agora mesmo") ||
     textoLower.includes("essa noite") ||
     textoLower.includes("esta noite") ||
@@ -3456,7 +3469,12 @@ if (!jaTemReserva) {
     textoLower.includes("hoje à tarde") ||
     textoLower.includes("hoje a tarde") ||
     textoLower.includes("hoje cedo");
-  if (algumaDataEhHoje || (mencionaHoje && temContextoReserva)) {
+
+  const querReservaHoje =
+    algumaDataEhHoje ||
+    (mencionaHoje && temContextoReserva && !temDataFuturaExplicita);
+
+  if (querReservaHoje) {
     console.log(`Reserva para hoje detectada de ${userId} — escalada silenciosa antes de qualquer fluxo`);
     await escalarConversa(userId, "Cliente quer reserva para hoje");
     return;

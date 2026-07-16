@@ -2244,17 +2244,52 @@ function extractExplicitDates(text) {
   };
   const mesesAlt = Object.keys(mesesMap).join("|");
 
-  // "dia 16" / "dia 16 de maio" / "no dia 16"
-  const diaSoltoRegex = new RegExp(`\\bdia\\s+(\\d{1,2})(?:\\s+de\\s+(${mesesAlt}))?\\b`, "gi");
-  while ((match = diaSoltoRegex.exec(text)) !== null) {
-    const diaNum = parseInt(match[1]);
-    const mes = match[2] ? mesesMap[match[2].toLowerCase()] : (now.getMonth() + 1);
+  function resolverAnoParaMes(diaNum, mes) {
     let ano = now.getFullYear();
-    // se o mês informado já passou neste ano, assume ano seguinte
-    if (match[2] && (mes < now.getMonth() + 1 || (mes === now.getMonth() + 1 && diaNum < now.getDate()))) {
+    if (mes < now.getMonth() + 1 || (mes === now.getMonth() + 1 && diaNum < now.getDate())) {
       ano += 1;
     }
-    results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
+    return ano;
+  }
+
+  // "dia 01 ou 02 de agosto" / "dias 01 e 02 de agosto" / "01, 02 e 03 de agosto"
+  // captura vários dias antecedendo "de <mês>" e aplica o mês a TODOS
+  const multiDiasMesRegex = new RegExp(`\\b(?:dias?\\s+)?(\\d{1,2}(?:\\s*(?:,|e|ou|\\/|-)\\s*\\d{1,2})+)\\s+de\\s+(${mesesAlt})\\b`, "gi");
+  while ((match = multiDiasMesRegex.exec(text)) !== null) {
+    const mes = mesesMap[match[2].toLowerCase()];
+    const numeros = match[1].split(/\s*(?:,|e|ou|\/|-)\s*/).map(s => parseInt(s)).filter(n => !isNaN(n));
+    for (const diaNum of numeros) {
+      const ano = resolverAnoParaMes(diaNum, mes);
+      results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
+    }
+  }
+
+  // "dia 16" / "dia 16 de maio" / "no dia 16"
+  // Extras: se o texto contém explicitamente "de <MES>" em algum lugar, aplicar esse mês
+  // a "dia N" que não tenham mês próprio (evita bug "dia 01 ou 02 de agosto" virar 01/mês-atual)
+  const mesGlobalMatch = text.match(new RegExp(`\\bde\\s+(${mesesAlt})\\b`, "i"));
+  const mesGlobalInferido = mesGlobalMatch ? mesesMap[mesGlobalMatch[1].toLowerCase()] : null;
+
+  const diaSoltoRegex = new RegExp(`\\bdias?\\s+(\\d{1,2})(?:\\s+de\\s+(${mesesAlt}))?\\b`, "gi");
+  while ((match = diaSoltoRegex.exec(text)) !== null) {
+    const diaNum = parseInt(match[1]);
+    if (match[2]) {
+      const mes = mesesMap[match[2].toLowerCase()];
+      const ano = resolverAnoParaMes(diaNum, mes);
+      results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
+    } else if (mesGlobalInferido) {
+      const ano = resolverAnoParaMes(diaNum, mesGlobalInferido);
+      results.push(`${String(diaNum).padStart(2,"0")}/${String(mesGlobalInferido).padStart(2,"0")}/${ano}`);
+    } else {
+      // sem mês explícito: usar mês atual; se o dia já passou, assumir próximo mês
+      let mes = now.getMonth() + 1;
+      let ano = now.getFullYear();
+      if (diaNum < now.getDate()) {
+        mes += 1;
+        if (mes > 12) { mes = 1; ano += 1; }
+      }
+      results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
+    }
   }
 
   // "16 de maio" / "16 de junho de 2026"
@@ -3779,7 +3814,7 @@ Regras OBRIGATÓRIAS:
     await clearPendingMessages(userId);
     await setDebounceToken(userId, `cancelled_${Date.now()}`);
     await cancelarFollowUp(userId);
-    console.log(`Conversa ${userId} marcada como escalada.`);
+    console.log(`Conversa ${userId} marcada como escalada. Motivo: ${motivoEscalada}. Reply original: ${reply.substring(0, 400)}`);
     reply = reply.replace(/\[ESCALAR:\s*motivo=.*?\]/i, "").trim();
   }
 

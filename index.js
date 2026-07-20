@@ -2223,8 +2223,8 @@ function extractExplicitDates(text) {
     return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${ano}`;
   });
 
-  // alternação ampla de dia-da-semana incluindo typos comuns
-  const diaSemanaAlt = "segunda|segundaa|terça|terca|terça-feira|terca-feira|quarta|quartaa|quinta|quintaa|sexta|sextaa|sextra|sex|sábado|sabado|sábadoo|sabdo|sabao|sabad|sab|domingo|domng|domigo|domig|dom";
+  // alternação ampla de dia-da-semana incluindo typos comuns e variantes -feira
+  const diaSemanaAlt = "segunda-feira|segundaa|segunda|terça-feira|terca-feira|terça|terca|quarta-feira|quartaa|quarta|quinta-feira|quintaa|quinta|sexta-feira|sextaa|sextra|sexta|sex|sábado|sabado|sábadoo|sabdo|sabao|sabad|sab|domingo|domng|domigo|domig|dom";
 
   // "<diasemana> dia <num>" (ex.: "sábado dia 16")
   const diaNumRegex = new RegExp(`\\b(${diaSemanaAlt})\\s+dia\\s+(\\d{1,2})\\b`, "gi");
@@ -2234,6 +2234,20 @@ function extractExplicitDates(text) {
     const mesAtual = now.getMonth() + 1;
     const anoAtual = now.getFullYear();
     results.push(`${String(diaNum).padStart(2,"0")}/${String(mesAtual).padStart(2,"0")}/${anoAtual}`);
+  }
+
+  // "<diasemana> (24)" / "<diasemana> 24" / "sexta-feira (24)" — número imediato após dia da semana
+  const diaSemanaComNumRegex = new RegExp(`\\b(${diaSemanaAlt})\\s*[\\s\\(]\\s*(\\d{1,2})\\s*\\)?`, "gi");
+  while ((match = diaSemanaComNumRegex.exec(text)) !== null) {
+    const diaNum = parseInt(match[2]);
+    if (isNaN(diaNum) || diaNum < 1 || diaNum > 31) continue;
+    let mes = now.getMonth() + 1;
+    let ano = now.getFullYear();
+    if (diaNum < now.getDate()) {
+      mes += 1;
+      if (mes > 12) { mes = 1; ano += 1; }
+    }
+    results.push(`${String(diaNum).padStart(2,"0")}/${String(mes).padStart(2,"0")}/${ano}`);
   }
 
   // mapa de meses por nome (com variações)

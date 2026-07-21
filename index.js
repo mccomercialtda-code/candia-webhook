@@ -1887,11 +1887,13 @@ Nome: [nome completo do aniversariante]"
   - Sábado: 15hs
   - Domingo: 14hs
 
-* Lugares garantidos por dia:
-  - Sábado: 8
-  - Sexta: 12
-  - Domingo: 15
-  - Terça a quinta: número de pessoas informado pelo cliente, limitado a 20
+* Lugares garantidos por dia — REGRA GERAL: usar o MENOR entre o número de pessoas informado pelo cliente e o limite do dia
+  - Sábado: min(pessoas_informadas, 8) — se cliente pediu 4, garantidos = 4; se pediu 20, garantidos = 8
+  - Sexta: min(pessoas_informadas, 12)
+  - Domingo: min(pessoas_informadas, 15)
+  - Terça a quinta: min(pessoas_informadas, 20)
+* NUNCA mostrar "Lugares garantidos" maior do que o cliente pediu — se ele pediu 4 e o limite é 15, o valor certo é 4 (não 15)
+* Se o número de pessoas ainda não foi informado, NÃO gerar o bloco de confirmação nem gravar a reserva — perguntar antes quantas pessoas vêm
 
 * NADA mais além desse modelo — sem frases extras, sem despedida animada, sem emojis adicionais, sem mencionar couvert, tolerância ou qualquer outra informação
 
@@ -3755,9 +3757,10 @@ O cliente acabou de enviar uma mensagem de confirmação e ainda não há reserv
 
 Regras OBRIGATÓRIAS:
 1. Se TODOS os 4 dados obrigatórios estiverem no histórico, gere IMEDIATAMENTE a mensagem de confirmação padrão + o bloco [RESERVA: ...] com esses dados. NÃO pergunte novamente nenhum dado que já foi dado antes.
-2. Se algum dos 4 dados estiver ausente, pergunte APENAS o dado que falta. NUNCA repetir dados já fornecidos.
-3. Dados fornecidos por atendente humano ou em RESUMO DA CONVERSA são válidos e NÃO devem ser reperguntados.
-4. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.[/SISTEMA]\n`;
+2. Se algum dos 4 dados estiver ausente, pergunte APENAS o dado que falta. NUNCA repetir dados já fornecidos. NUNCA gere o bloco [RESERVA:] com dados faltando.
+3. Em particular, se o número de pessoas (total_esperado) ainda não foi informado, PERGUNTE quantas pessoas vêm antes de fechar. NUNCA assumir o limite do dia como número de pessoas.
+4. Dados fornecidos por atendente humano ou em RESUMO DA CONVERSA são válidos e NÃO devem ser reperguntados.
+5. Se o histórico não tiver contexto de reserva (cliente está confirmando outra coisa), responder normalmente.[/SISTEMA]\n`;
   }
 
 

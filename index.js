@@ -1502,19 +1502,19 @@ JOGOS / TRANSMISSÕES
 
 MÚSICA AO VIVO
 
-* ATENÇÃO — REESTRUTURAÇÃO TEMPORÁRIA DA PROGRAMAÇÃO: por enquanto, NÃO temos música ao vivo às TERÇAS e QUARTAS. Nestes dias há apenas playlists da casa e NÃO há cobrança de couvert.
-* Se o cliente perguntar se tem música ao vivo na terça ou na quarta, responder EXATAMENTE: "Por enquanto estamos reestruturando nossa programação e não estamos tendo música ao vivo às terças e quartas. Nestes dias não há cobrança de couvert, e você curte nossas incríveis playlists 😉"
-* Nos demais dias (quinta a domingo) temos música ao vivo normalmente
-* HORÁRIOS DA MÚSICA AO VIVO (para os dias com música):
-  - Quinta a sábado: música ao vivo até aproximadamente 22h
+* Temos música ao vivo de terça a domingo (segunda o bar está fechado)
+* HORÁRIOS DA MÚSICA AO VIVO:
+  - Terça a sábado: música ao vivo até aproximadamente 22h
   - Domingo: música ao vivo até aproximadamente 18h
 * NUNCA dizer que a música vai até a meia-noite, até o fechamento, "até fechar" ou qualquer horário diferente dos acima
 * NUNCA dizer que o bar fecha à meia-noite quando o cliente perguntar sobre música — responda apenas com o horário da música
 * Sexta a domingo: samba
-* Quinta: programação variada (samba, pagode, brasilidades, etc)
+* Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
 * Se o cliente perguntar onde é a música, onde toca o samba, ou onde fica o palco, responder: "A música normalmente fica na parte interna do bar 😊"
-* Se o cliente perguntar por música ao vivo em terça ou quarta, NÃO dizer apenas "não tem música ao vivo" — usar a resposta padrão sobre reestruturação e playlists acima
-* Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder qualquer pergunta sobre música, artista, horário, estilo ou Instagram do artista — mesmo que a pergunta seja indireta
+* PROGRAMAÇÃO DA DATA CONSULTADA — regra crítica:
+  - Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder
+  - Se o cliente perguntou sobre programação/música de uma data específica e NÃO houver PROGRAMAÇÃO DO DIA no prompt (a data foi consultada e não retornou nada), responder EXATAMENTE: "Ainda não temos a confirmação sobre música ao vivo nesse dia 😊 Você pode ir acompanhando a programação no tópico 'Agenda' em nossos destaques!"
+  - NUNCA dizer "não vai ter samba"/"não vai ter música" só porque a programação ainda não foi divulgada — use a resposta padrão acima
 * Ao informar programação, usar SEMPRE o estilo musical exato que consta no Notion — nunca generalizar
 * @rayramirandaa toca brasilidades — NUNCA informar como samba
 * Se o estilo no Notion for "brasilidades", dizer "brasilidades". Se for "samba e pagode", dizer "samba e pagode". Nunca substituir por "samba" genérico
@@ -1544,21 +1544,19 @@ MÚSICA AO VIVO
 
 COUVERT
 
-* Terça e quarta: SEM couvert (não há música ao vivo — apenas playlists da casa)
-* Quinta: R$12
+* Terça a quinta: R$12
 * Sexta a domingo: R$10
 * Só mencionar se perguntarem
-* ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor — SEM couvert para terça/quarta, R$12 para quinta, R$10 para sexta/sábado/domingo
+* ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor
 * NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
 * Informar couvert apenas se o cliente perguntar explicitamente
 
 ENTRADA / COUVERT
 
 * Entrada e couvert são a mesma coisa
-* De quinta a domingo SEMPRE há couvert
-* EXCEÇÃO ATUAL: às terças e quartas, por conta da reestruturação da programação (sem música ao vivo), NÃO há cobrança de couvert. Nesses dias pode dizer "não temos couvert" — usar a resposta padrão da seção MÚSICA AO VIVO
-* Nunca dizer "não tem entrada" para quinta a domingo
-* NUNCA dizer "entrada gratuita", "entrada franca", "entrada livre" para quinta a domingo
+* Sempre há couvert (de terça a domingo)
+* Nunca dizer "não tem entrada"
+* NUNCA dizer "entrada gratuita", "entrada franca", "entrada livre"
 * NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
 * Informar couvert apenas se o cliente perguntar explicitamente
 
@@ -2201,7 +2199,14 @@ function proximoDiaSemana(nomeDia) {
     "domingo": 0, "segunda": 1, "terça": 2, "terca": 2,
     "quarta": 3, "quinta": 4, "sexta": 5, "sábado": 6, "sabado": 6
   };
-  const alvo = diasMap[nomeDia.toLowerCase()];
+  // normaliza: remove sufixo "-feira" e trata abreviações
+  const nomeLower = nomeDia.toLowerCase().trim().replace(/-feira$/, "");
+  const abreviacoes = {
+    "seg": "segunda", "ter": "terça", "qua": "quarta",
+    "qui": "quinta", "sex": "sexta", "sab": "sábado", "dom": "domingo"
+  };
+  const nomeCanon = abreviacoes[nomeLower] || nomeLower;
+  const alvo = diasMap[nomeCanon];
   if (alvo === undefined) return null;
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
   const hoje = now.getDay();
@@ -2333,11 +2338,11 @@ function extractExplicitDates(text) {
 
   // mapa de aliases de dia-da-semana (typos -> nome padrão)
   const diaSemanaCanon = {
-    "segunda": "segunda", "segundaa": "segunda",
+    "segunda": "segunda", "segundaa": "segunda", "segunda-feira": "segunda",
     "terça": "terça", "terca": "terça", "terça-feira": "terça", "terca-feira": "terça",
-    "quarta": "quarta", "quartaa": "quarta",
-    "quinta": "quinta", "quintaa": "quinta",
-    "sexta": "sexta", "sextaa": "sexta", "sextra": "sexta", "sex": "sexta",
+    "quarta": "quarta", "quartaa": "quarta", "quarta-feira": "quarta",
+    "quinta": "quinta", "quintaa": "quinta", "quinta-feira": "quinta",
+    "sexta": "sexta", "sextaa": "sexta", "sextra": "sexta", "sex": "sexta", "sexta-feira": "sexta",
     "sábado": "sábado", "sabado": "sábado", "sábadoo": "sábado", "sabdo": "sábado",
     "sabao": "sábado", "sabad": "sábado", "sab": "sábado",
     "domingo": "domingo", "domng": "domingo", "domigo": "domingo", "domig": "domingo", "dom": "domingo"

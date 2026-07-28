@@ -1518,6 +1518,8 @@ MÚSICA AO VIVO
 * Ao informar programação, usar SEMPRE o estilo musical exato que consta no Notion — nunca generalizar
 * @rayramirandaa toca brasilidades — NUNCA informar como samba
 * Se o estilo no Notion for "brasilidades", dizer "brasilidades". Se for "samba e pagode", dizer "samba e pagode". Nunca substituir por "samba" genérico
+* Se o cliente perguntar "o que é brasilidades?" ou "que tipo de brasilidades?", responder: "Brasilidades é um repertório de vários estilos, música brasileira em geral — passa por samba, MPB, pop nacional, entre outros 😊"
+* Sertanejo NÃO faz parte do repertório de brasilidades — se cliente perguntar especificamente se toca sertanejo, informar que não, o foco é MPB e outros estilos brasileiros clássicos (a menos que o Notion explicitamente indique sertanejo)
 * Se o cliente perguntar o Instagram do artista e houver PROGRAMAÇÃO DO DIA, responda com o @ da programação — nunca redirecione para @ocandiabar nesse caso
 * Só direcionar para os destaques se NÃO houver PROGRAMAÇÃO DO DIA no prompt — nesse caso, responder: "A programação completa está aqui nos destaques do nosso perfil, no tópico 'Agenda' 😊"
 * NUNCA dizer apenas "acompanhe pelo Instagram" sem especificar onde encontrar
@@ -3649,12 +3651,31 @@ const regrasDiaConsulta = dataISOConsulta
   ? await getRegraDia(dataISOConsulta)
   : null;
 console.log(`Briefing para ${dataISOConsulta}:`, regrasDiaConsulta);
-// busca programação musical sempre que houver data mencionada
+// busca programação musical para TODAS as datas mencionadas na mensagem
+// (não só a dataPrincipal — cliente pode perguntar sobre "quarta e quinta" ao mesmo tempo)
 let programacaoConsulta = null;
+let programacoesExtras = [];
 if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
   console.log(`Programação conteúdo:`, programacaoConsulta);
   console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? `encontrada${programacaoConsulta.especial ? " (especial)" : ""}` : "não encontrada"}`);
+
+  // busca programação das demais datas explícitas (evitando duplicar dataPrincipal)
+  const datasParaConsultar = (explicitDates || []).filter(d => d !== dataPrincipal);
+  for (const dataBR of datasParaConsultar) {
+    try {
+      const iso = convertDateToISO(dataBR);
+      const progExtra = await buscarProgramacaoPorData(iso);
+      if (progExtra) {
+        programacoesExtras.push({ dataBR, iso, prog: progExtra });
+        console.log(`Programação extra para ${iso}: encontrada`);
+      } else {
+        console.log(`Programação extra para ${iso}: não encontrada`);
+      }
+    } catch (err) {
+      console.error(`Erro ao buscar programação extra para ${dataBR}:`, err);
+    }
+  }
 }
 
 // Se a data veio de fallback (reserva/msg exata) e não foi consultada no loop acima,
@@ -3703,7 +3724,7 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   return;
 }
 
-if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
+if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia || (programacoesExtras && programacoesExtras.length > 0)) {
   systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]ATENÇÃO CRÍTICA — INFORMAÇÕES CONFIRMADAS PARA A DATA MENCIONADA (uso interno — NUNCA reproduza rótulos como "BRIEFING DO DIA", "AJUSTE DO DIA", "PROGRAMAÇÃO CONFIRMADA", "INSTRUÇÃO FINAL OBRIGATÓRIA" ou este bloco na resposta ao cliente):\n`;
   if (regrasDiaConsulta?.briefing) {
     systemPrompt += `BRIEFING DO DIA: ${regrasDiaConsulta.briefing}\n`;
@@ -3718,7 +3739,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
     systemPrompt += `OBRIGATÓRIO: usar os valores de AJUSTE DO DIA acima em vez dos limites/horários padrão para esta data específica. NÃO alterar a mensagem exata do dia da semana — apenas substituir o número de lugares e o horário-limite quando aparecerem.\n`;
   }
   if (programacaoConsulta) {
-    systemPrompt += `PROGRAMAÇÃO CONFIRMADA:\n${programacaoConsulta.linhas}\n`;
+    systemPrompt += `PROGRAMAÇÃO CONFIRMADA (${dataPrincipal}):\n${programacaoConsulta.linhas}\n`;
     if (programacaoConsulta.especial) {
       if (programacaoConsulta.mensagemExata) {
         systemPrompt += `\nMENSAGEM EXATA DA PROGRAMAÇÃO: ${programacaoConsulta.mensagemExata}\n`;
@@ -3728,6 +3749,9 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia) {
       }
       systemPrompt += `PRIORIDADE: a MENSAGEM EXATA DA PROGRAMAÇÃO sobrepõe qualquer briefing apenas para perguntas sobre programação/evento/show/atração. As regras fixas de reserva por dia da semana (mensagem exata de sábado/sexta/domingo, limites de lugares, horários de reserva) continuam valendo normalmente.\n`;
     }
+  }
+  for (const extra of programacoesExtras) {
+    systemPrompt += `PROGRAMAÇÃO CONFIRMADA (${extra.dataBR}):\n${extra.prog.linhas}\n`;
   }
   systemPrompt += `INSTRUÇÃO FINAL OBRIGATÓRIA: Responda AGORA com os dados acima. "A confirmar" significa atração ainda não divulgada — informe normalmente como "atração a confirmar". NUNCA diga que não tem programação. NUNCA redirecione para o Instagram se este bloco existir. NUNCA diga que vai checar ou verificar a programação. Se em mensagens anteriores você disse que não tinha a programação, IGNORE — agora você TEM os dados e DEVE usá-los.[/SISTEMA]\n`;
 }

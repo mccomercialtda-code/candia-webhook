@@ -3375,6 +3375,43 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
     return;
   }
 
+  if (cmd.startsWith("/interacoes") || cmd === "/interacoes") {
+    const parts = raw.split(/\s+/);
+    let diaISO;
+    if (parts[1]) {
+      diaISO = parseDateFromCommand(parts[1]);
+      if (!diaISO) { await notifyOwner("⚠️ Data inválida. Use: /interacoes DD/MM ou /interacoes (sem arg = hoje)"); return; }
+    } else {
+      diaISO = dataBRToISOShort(getDataBrasilia());
+    }
+    const key = `interacoes:${diaISO}`;
+    const raw2 = await redisLRange(key, 0, -1);
+    const total = (raw2 || []).length;
+    if (total === 0) {
+      await notifyOwner(`📊 Interações em ${diaISO}: 0 registros na chave ${key}.\nSe deveria ter eventos, verifique se os pontos-chave estão sendo atingidos (reserva_gravada, escalada, sem_disponibilidade, etc).`);
+      return;
+    }
+    // conta por evento
+    const contagem = {};
+    const amostra = [];
+    for (const s of raw2) {
+      try {
+        const o = JSON.parse(s);
+        contagem[o.evento] = (contagem[o.evento] || 0) + 1;
+        if (amostra.length < 8) {
+          amostra.push(`${o.ts?.substring(11, 16) || "?"} · ${o.evento}${o.motivo ? ` (${o.motivo})` : ""} · ${o.username || "?"}`);
+        }
+      } catch {}
+    }
+    const contagemStr = Object.entries(contagem).map(([k, v]) => `• ${k}: ${v}`).join("\n");
+    await notifyOwner(
+      `📊 Interações em ${diaISO}: ${total} registros\n\n` +
+      `Por evento:\n${contagemStr}\n\n` +
+      `Amostra (últimos 8):\n${amostra.join("\n")}`
+    );
+    return;
+  }
+
   if (cmd.startsWith("/caso ")) {
     let alvo = raw.split(" ").slice(1).join(" ").trim();
     if (!alvo) { await notifyOwner("⚠️ Use: /caso ID ou /caso @username"); return; }
@@ -3455,6 +3492,8 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
 📈 ANÁLISE DE ATENDIMENTO
 /relatorio — Gera relatório do dia anterior (Claude Sonnet)
 /relatorio DD/MM — Gera relatório de uma data específica
+/interacoes — Contagem bruta de eventos do dia atual (debug)
+/interacoes DD/MM — Contagem bruta de eventos de uma data
 /caso ID|@user — Mostra histórico da conversa + eventos registrados (últimos 2 dias)
 
 📊 STATUS / LIMPEZA

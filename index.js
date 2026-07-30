@@ -167,6 +167,117 @@ async function redisDel(key) {
   }
 }
 
+async function redisLPush(key, value) {
+  try {
+    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    await fetch(`${UPSTASH_URL}/lpush/${encodeURIComponent(key)}/${encodeURIComponent(serialized)}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error(`Erro redis lpush ${key}:`, err);
+  }
+}
+
+async function redisLRange(key, start = 0, stop = -1) {
+  try {
+    const res = await fetch(`${UPSTASH_URL}/lrange/${encodeURIComponent(key)}/${start}/${stop}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    return data.result || [];
+  } catch (err) {
+    console.error(`Erro redis lrange ${key}:`, err);
+    return [];
+  }
+}
+
+async function redisExpire(key, seconds) {
+  try {
+    await fetch(`${UPSTASH_URL}/expire/${encodeURIComponent(key)}/${seconds}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+  } catch (err) {
+    console.error(`Erro redis expire ${key}:`, err);
+  }
+}
+
+// ─── Pipeline de análise de atendimento ────────────────────────────────────
+
+async function getUsernameOuId(userId) {
+  if (!userId) return "?";
+  const username = await redisGet(`ig_username:${userId}`);
+  return username ? `@${username}` : `ID:${userId}`;
+}
+
+// mascara nome + telefones em textos para evitar vazar PII nos registros/relatórios
+function mascararPII(texto) {
+  if (!texto) return texto;
+  return String(texto)
+    // telefones com 10-14 dígitos (com ou sem pontuação)
+    .replace(/\b(?:\(?\d{2}\)?[\s.-]?)?9?\d{4}[\s.-]?\d{4}\b/g, "[TEL]")
+    // sequências longas de dígitos
+    .replace(/\b\d{10,14}\b/g, "[TEL]")
+    // linhas típicas de modelo de confirmação
+    .replace(/Nome:\s*[^\n]+/gi, "Nome: [NOME]")
+    .replace(/Contato:\s*[^\n]+/gi, "Contato: [TEL]")
+    .replace(/Telefone:\s*[^\n]+/gi, "Telefone: [TEL]");
+}
+
+function dataBRToISOShort(d) {
+  const dia = String(d.getDate()).padStart(2, "0");
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  return `${d.getFullYear()}-${mes}-${dia}`;
+}
+
+async function registrarInteracao(evento, dados = {}) {
+  try {
+    const {
+      senderId,
+      mensagemCliente,
+      respostaBot,
+      motivo,
+      dadosReserva,
+      extras
+    } = dados;
+
+    const hoje = getDataBrasilia();
+    const dia = dataBRToISOShort(hoje);
+    const username = senderId ? await getUsernameOuId(senderId) : "?";
+
+    // Não salvar respostaBot em eventos de reserva (contém nome/telefone no modelo)
+    const eventosSemRespostaBot = new Set(["reserva_gravada", "reserva_falhou", "data_invalida"]);
+    const respostaBotSalva = eventosSemRespostaBot.has(evento)
+      ? null
+      : (respostaBot ? mascararPII(String(respostaBot).substring(0, 800)) : null);
+
+    const registro = {
+      ts: new Date().toISOString(),
+      evento,
+      senderId: senderId || null,
+      username,
+      mensagemCliente: mensagemCliente ? mascararPII(String(mensagemCliente).substring(0, 500)) : null,
+      respostaBot: respostaBotSalva,
+      motivo: motivo || null,
+      dadosReserva: dadosReserva ? {
+        data: dadosReserva.data || null,
+        diaSemana: dadosReserva.dia || null,
+        lugares: dadosReserva.lugares != null ? parseInt(dadosReserva.lugares) : null,
+        totalEsperado: dadosReserva.total_esperado != null ? parseInt(dadosReserva.total_esperado) : null,
+        local: dadosReserva.local || null
+      } : null,
+      extras: extras || null
+    };
+
+    const key = `interacoes:${dia}`;
+    await redisLPush(key, JSON.stringify(registro));
+    await redisExpire(key, 86400 * 60);
+  } catch (err) {
+    console.error(`Erro registrarInteracao (${evento}):`, err);
+  }
+}
+
 // ─── Horário comercial ────────────────────────────────────────────────────────
 
 async function isForceOutsideHoursEnabled() {
@@ -336,6 +447,7 @@ async function salvarReservaNaNotion(data, instagramId) {
       `📍 Local: ${data.local || "—"}\n\n` +
       `Corrija o ano e use /reservar @username para gravar manualmente.`
     );
+    registrarInteracao("data_invalida", { senderId: instagramId, motivo: `ano < 2026 (${anoReserva})`, dadosReserva: data }).catch(() => {});
     return false;
   }
 
@@ -358,6 +470,7 @@ async function salvarReservaNaNotion(data, instagramId) {
       `📞 Contato: ${data.contato || "—"}\n\n` +
       `Verifique e corrija manualmente.`
     );
+    registrarInteracao("data_invalida", { senderId: instagramId, motivo: `data mal formada: ${dataStr}`, dadosReserva: data }).catch(() => {});
     // segue o fluxo e tenta gravar mesmo assim (briefing pede para gravar)
   }
 
@@ -406,6 +519,7 @@ async function salvarReservaNaNotion(data, instagramId) {
 
       if (result.id) {
         console.log(`Reserva gravada no Notion (tentativa ${tentativa}):`, result.id);
+        registrarInteracao("reserva_gravada", { senderId: instagramId, dadosReserva: data }).catch(() => {});
         return true;
       }
 
@@ -428,6 +542,7 @@ async function salvarReservaNaNotion(data, instagramId) {
     `📍 Local: ${data.local || "—"}\n\n` +
     `Grave manualmente ou use /reservar @username`
   );
+  registrarInteracao("reserva_falhou", { senderId: instagramId, motivo: "notion retornou erro após 3 tentativas", dadosReserva: data }).catch(() => {});
   return false;
 }
 
@@ -780,6 +895,100 @@ async function enviarResumoDiario() {
   await notifyOwner(`📋 Reservas gravadas hoje (${getTodayISO()}):\n${linhas.join("\n")}`);
 }
 
+// Relatório diário de análise das interações — chama Claude com registros do dia
+async function gerarRelatorioDiario(diaAlvoISO = null) {
+  try {
+    const alvo = diaAlvoISO;
+    let dia;
+    if (alvo) {
+      dia = alvo; // formato YYYY-MM-DD
+    } else {
+      const ontem = getDataBrasilia();
+      ontem.setDate(ontem.getDate() - 1);
+      dia = dataBRToISOShort(ontem);
+    }
+
+    const key = `interacoes:${dia}`;
+    const raw = await redisLRange(key, 0, -1);
+    if (!raw || raw.length === 0) {
+      await notifyOwner(`📊 Relatório ${dia}: nenhuma interação registrada.`);
+      return;
+    }
+
+    const interacoes = raw.map(s => {
+      try { return JSON.parse(s); } catch { return null; }
+    }).filter(Boolean);
+
+    const idsUnicos = new Set(interacoes.map(i => i.senderId).filter(Boolean));
+    const metricas = {
+      totalConversas: idsUnicos.size,
+      reservasGravadas: interacoes.filter(i => i.evento === "reserva_gravada").length,
+      reservasFalhou: interacoes.filter(i => i.evento === "reserva_falhou").length,
+      escaladas: interacoes.filter(i => i.evento === "escalada").length,
+      semDisponibilidade: interacoes.filter(i => i.evento === "sem_disponibilidade").length,
+      dataInvalida: interacoes.filter(i => i.evento === "data_invalida").length,
+      botInventou: interacoes.filter(i => i.evento === "bot_inventou").length
+    };
+
+    const prompt = `Você é um analista de atendimento do Candiá Bar (bar de samba em BH). Analise as interações do dia ${dia} e gere um relatório objetivo em português.
+
+MÉTRICAS DO DIA:
+${JSON.stringify(metricas, null, 2)}
+
+INTERAÇÕES COMPLETAS (${interacoes.length} registros):
+${JSON.stringify(interacoes, null, 2)}
+
+Gere o relatório neste formato exato:
+
+📊 Relatório ${dia}
+Conversas: X | Reservas: X | Conversão: X%
+
+✅ RESERVAS FECHADAS: X
+
+❌ RESERVAS NÃO FECHADAS: X
+Motivos:
+• [emoji] Motivo — X casos
+  [username/ID de cada caso]
+
+🔴 PROBLEMAS TÉCNICOS DO BOT: X
+[Para cada problema:]
+• Problema identificado
+  Cliente: [username]
+  O que aconteceu: [descrição curta]
+  Causa provável: [diagnóstico técnico]
+  Sugestão de correção: [ação concreta]
+
+💡 INSIGHTS DE NEGÓCIO
+[Padrões relevantes, ex: "3 clientes reclamaram do horário de 15h"]
+
+Use @ quando disponível, ID numérico como fallback. Seja direto e objetivo. Máximo 800 palavras.`;
+
+    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": CLAUDE_API_KEY,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+    const data = await claudeRes.json();
+    const relatorio = data.content?.[0]?.text;
+    if (!relatorio) {
+      await notifyOwner(`⚠️ Relatório ${dia}: resposta vazia do Claude. Erro: ${JSON.stringify(data.error || {})}`);
+      return;
+    }
+    await notifyOwner(relatorio);
+  } catch (err) {
+    console.error("Erro em gerarRelatorioDiario:", err);
+    await notifyOwner(`⚠️ Erro ao gerar relatório: ${err.message}`);
+  }
+}
+
 // Relatório semanal: todas as reservas futuras agrupadas por data
 async function enviarRelatorioSemanal() {
   console.log("Enviando relatório semanal de reservas...");
@@ -992,8 +1201,18 @@ function agendarRotinasDiarias() {
     }
   }
 
+  function agendarRelatorioAnalise() {
+    const ms = msAteHorario(2, 0);
+    console.log(`Relatório de análise (Claude) agendado em ${Math.round(ms / 3600000)}h`);
+    setTimeout(() => {
+      gerarRelatorioDiario().catch(err => console.error("Erro no relatório de análise:", err));
+      setTimeout(agendarRelatorioAnalise, 1000);
+    }, ms);
+  }
+
   agendarResumo();
   agendarRelatorioSemanal();
+  agendarRelatorioAnalise();
 }
 
 // PONTO 11: worker periódico para follow-ups perdidos após restart do servidor
@@ -3075,6 +3294,70 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
     return;
   }
   
+  if (cmd.startsWith("/relatorio")) {
+    const parts = raw.split(/\s+/);
+    let diaISO;
+    if (parts[1]) {
+      const iso = parseDateFromCommand(parts[1]);
+      if (!iso) { await notifyOwner("⚠️ Data inválida. Use: /relatorio DD/MM ou /relatorio (sem arg = ontem)"); return; }
+      diaISO = iso;
+    }
+    await notifyOwner(diaISO ? `📊 Gerando relatório de ${formatDateBR(diaISO)}...` : `📊 Gerando relatório de ontem...`);
+    gerarRelatorioDiario(diaISO).catch(err => notifyOwner(`⚠️ Erro no relatório: ${err.message}`));
+    return;
+  }
+
+  if (cmd.startsWith("/caso ")) {
+    let alvo = raw.split(" ").slice(1).join(" ").trim();
+    if (!alvo) { await notifyOwner("⚠️ Use: /caso ID ou /caso @username"); return; }
+    if (alvo.startsWith("@")) {
+      const username = alvo.slice(1).toLowerCase();
+      const res = await fetch(`${UPSTASH_URL}/keys/ig_username:*`, {
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const data = await res.json();
+      const keys = data.result || [];
+      let found = null;
+      for (const key of keys) {
+        const val = await redisGet(key);
+        if (val && val.toLowerCase() === username) {
+          found = key.replace("ig_username:", "");
+          break;
+        }
+      }
+      if (!found) { await notifyOwner(`⚠️ Usuário ${alvo} não encontrado no cache.`); return; }
+      alvo = found;
+    }
+    const hist = await getHistory(alvo);
+    if (!hist || hist.length === 0) {
+      await notifyOwner(`⚠️ Sem histórico para ${alvo}.`);
+      return;
+    }
+    const username = await redisGet(`ig_username:${alvo}`);
+    const linhas = hist.slice(-30).map(h => {
+      const role = h.role === "user" ? "👤" : (h.content && h.content.startsWith("[atendente]") ? "🧑‍💼" : "🤖");
+      return `${role} ${String(h.content || "").substring(0, 300)}`;
+    });
+    // busca eventos do dia atual e do anterior para esse senderId
+    const dias = [dataBRToISOShort(getDataBrasilia())];
+    const ontem = getDataBrasilia(); ontem.setDate(ontem.getDate() - 1);
+    dias.push(dataBRToISOShort(ontem));
+    let eventos = [];
+    for (const d of dias) {
+      const raw2 = await redisLRange(`interacoes:${d}`, 0, -1);
+      for (const s of (raw2 || [])) {
+        try {
+          const o = JSON.parse(s);
+          if (o.senderId === alvo) eventos.push(`${o.ts.substring(11,16)} · ${o.evento}${o.motivo ? ` (${o.motivo})` : ""}`);
+        } catch {}
+      }
+    }
+    const header = `📋 Conversa — ${username ? `@${username}` : `ID:${alvo}`}\n`;
+    const eventosStr = eventos.length ? `\nEventos:\n${eventos.join("\n")}\n` : "";
+    await notifyOwner(header + eventosStr + `\n` + linhas.join("\n"));
+    return;
+  }
+
   if (cmd === "/help") {
     await notifyOwner(
 `📋 Comandos disponíveis:
@@ -3100,6 +3383,11 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
 /escalar DD/MM[/AAAA] — Marca uma data: qualquer cliente que mencionar é escalado silenciosamente
 /escalar DD/MM limpar — Remove o marcador
 /escalar — Lista datas atualmente marcadas
+
+📈 ANÁLISE DE ATENDIMENTO
+/relatorio — Gera relatório do dia anterior (Claude Sonnet)
+/relatorio DD/MM — Gera relatório de uma data específica
+/caso ID|@user — Mostra histórico da conversa + eventos registrados (últimos 2 dias)
 
 📊 STATUS / LIMPEZA
 /status — Mostra se o bot está ativo ou pausado
@@ -3222,7 +3510,7 @@ async function buscarUsernameInstagram(userId) {
     const res = await fetch(`https://graph.instagram.com/v25.0/${userId}?fields=username&access_token=${IG_TOKEN}`);
     const data = await res.json();
     const username = data.username || null;
-    if (username) await redisSet(`ig_username:${userId}`, username, 86400 * 30);
+    if (username) await redisSet(`ig_username:${userId}`, username, 86400 * 90);
     return username;
   } catch (err) {
     console.error(`Erro ao buscar username de ${userId}:`, err);
@@ -3299,6 +3587,7 @@ async function escalarConversa(userId, motivo) {
   await setDebounceToken(userId, `cancelled_${Date.now()}`);
   await cancelarFollowUp(userId);
   console.log(`Conversa ${userId} marcada como escalada (silenciosa). Motivo: ${motivo}`);
+  registrarInteracao("escalada", { senderId: userId, motivo }).catch(() => {});
 }
 
 // atualiza o campo Local da última reserva do cliente no Notion (sem criar nova entrada)
@@ -3563,6 +3852,7 @@ const querAlterarReserva =
       // ambas condições precisam bater: disponivel=false E tipo=esgotado (defesa em profundidade)
       if (disp && disp.disponivel === false && disp.tipo === "esgotado") {
         disponibilidadeInfo += `⚠️ ATENÇÃO: As reservas para ${data} (${disp.diaSemana}) estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
+        registrarInteracao("sem_disponibilidade", { senderId: userId, motivo: `${data} (${disp.diaSemana}) esgotada`, dadosReserva: { data, dia: disp.diaSemana } }).catch(() => {});
       } else if (disp.tipo === "descoberto") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível. Área coberta praticamente esgotada — provavelmente a reserva ficará na área externa (calçada), mas NUNCA garantir isso ao cliente. Usar a mensagem exata do dia (variante descoberta) que já contém a redação correta ("provavelmente sua reserva ficará na área externa..."). ${disp.vagasDescoberto} vagas de descoberto restantes.\n`;
       } else if (disp.tipo === "coberto") {
@@ -3718,6 +4008,7 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   const usernameEsc = await redisGet(`ig_username:${userId}`);
   await notifyOwner(`⚠️ Escalonamento automático por briefing do dia\nCliente: ${userId}${usernameEsc ? ` (@${usernameEsc})` : ""}\nBriefing: ${regrasDiaConsulta.briefing}\nUse: /reativar ${userId}`);
   await marcarConversaEscalada(userId, "Briefing do dia requer atenção humana");
+  registrarInteracao("escalada", { senderId: userId, motivo: "Briefing do dia requer atenção humana" }).catch(() => {});
   await clearPendingMessages(userId);
   await setDebounceToken(userId, `cancelled_${Date.now()}`);
   await cancelarFollowUp(userId);
@@ -3887,6 +4178,7 @@ Regras OBRIGATÓRIAS:
     const usernameEscalado = await redisGet(`ig_username:${userId}`);
     await notifyOwner(`⚠️ Escalonar conversa com ${userId}${usernameEscalado ? ` (@${usernameEscalado})` : ""}\nMotivo: ${motivoEscalada}\nUse: /reativar ${userId}`);
     await marcarConversaEscalada(userId, motivoEscalada);
+    registrarInteracao("escalada", { senderId: userId, motivo: motivoEscalada }).catch(() => {});
     await clearPendingMessages(userId);
     await setDebounceToken(userId, `cancelled_${Date.now()}`);
     await cancelarFollowUp(userId);
@@ -4044,6 +4336,7 @@ if (escalation) {
   );
 
   await marcarConversaEscalada(userId, escalation.motivo || "");
+  registrarInteracao("escalada", { senderId: userId, motivo: escalation.motivo || "sem motivo" }).catch(() => {});
   await clearPendingMessages(userId);
   await setDebounceToken(userId, `cancelled_${Date.now()}`);
   await cancelarFollowUp(userId);
@@ -4052,6 +4345,12 @@ if (escalation) {
 
   return; // 🔥 NÃO RESPONDE AO CLIENTE
 }
+
+  // detecta se Claude vazou instruções internas na resposta (antes de filtrar)
+  const vazou = /\[SISTEMA[^\]]*\]|\[\/SISTEMA\]|<instrucao_interna>|\[CONSULTAR_DISPONIBILIDADE\]/i.test(reply);
+  if (vazou) {
+    registrarInteracao("bot_inventou", { senderId: userId, motivo: "vazou marcador interno na resposta", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
+  }
 
   const cleanReply = reply
     .replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "")
@@ -4391,6 +4690,7 @@ if (message && message.trim().toLowerCase() === "humano") {
   const username = await redisGet(`ig_username:${senderId}`);
   await notifyOwner(`⚠️ Cliente solicitou atendimento humano\nID: ${senderId}\n@${username || "sem_username"}\nUse: /reativar ${senderId}`);
   await marcarConversaEscalada(senderId, "Cliente solicitou atendimento humano");
+  registrarInteracao("escalada", { senderId, motivo: "Cliente solicitou atendimento humano" }).catch(() => {});
   await redisSet(`echo_bot:${senderId}`, "1", 30);
   await sendInstagramMessage(senderId, 'Certo! Em breve alguém da equipe vai te atender por aqui 😊');
   return;

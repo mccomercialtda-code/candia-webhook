@@ -231,6 +231,36 @@ function dataBRToISOShort(d) {
   return `${d.getFullYear()}-${mes}-${dia}`;
 }
 
+// alerta em tempo real quando N ocorrências do mesmo tipo caem numa janela curta
+// (usa lista Redis rolando por 1h + notifica no Telegram no limiar exato para não repetir)
+async function checarAlertaTempoReal(evento, motivo) {
+  try {
+    const eventosMonitorados = new Set(["escalada", "bot_inventou", "reserva_falhou", "data_invalida"]);
+    if (!eventosMonitorados.has(evento)) return;
+    const LIMIAR = 3;
+    const JANELA_S = 60 * 60; // 1 hora
+    const chaveTipo = `alerta:${evento}`;
+    await redisLPush(chaveTipo, JSON.stringify({ ts: Date.now(), motivo: motivo || "" }));
+    await redisExpire(chaveTipo, JANELA_S);
+    const items = await redisLRange(chaveTipo, 0, 99);
+    const agora = Date.now();
+    const recentes = (items || [])
+      .map(s => { try { return JSON.parse(s); } catch { return null; } })
+      .filter(Boolean)
+      .filter(o => (agora - o.ts) <= JANELA_S * 1000);
+    if (recentes.length === LIMIAR) {
+      const motivos = recentes.map(r => r.motivo).filter(Boolean).slice(0, 5);
+      await notifyOwner(
+        `🚨 ALERTA — ${LIMIAR}+ eventos de "${evento}" na última hora\n\n` +
+        (motivos.length ? `Motivos:\n${motivos.map(m => `• ${m}`).join("\n")}\n\n` : "") +
+        `Investigue e considere ajustes no prompt ou no código.`
+      );
+    }
+  } catch (err) {
+    console.error(`Erro em checarAlertaTempoReal (${evento}):`, err);
+  }
+}
+
 async function registrarInteracao(evento, dados = {}) {
   try {
     const {
@@ -273,6 +303,8 @@ async function registrarInteracao(evento, dados = {}) {
     const key = `interacoes:${dia}`;
     await redisLPush(key, JSON.stringify(registro));
     await redisExpire(key, 86400 * 60);
+    // alerta em tempo real se houver spike de eventos críticos
+    await checarAlertaTempoReal(evento, motivo);
   } catch (err) {
     console.error(`Erro registrarInteracao (${evento}):`, err);
   }
@@ -927,7 +959,8 @@ async function gerarRelatorioDiario(diaAlvoISO = null) {
       escaladas: interacoes.filter(i => i.evento === "escalada").length,
       semDisponibilidade: interacoes.filter(i => i.evento === "sem_disponibilidade").length,
       dataInvalida: interacoes.filter(i => i.evento === "data_invalida").length,
-      botInventou: interacoes.filter(i => i.evento === "bot_inventou").length
+      botInventou: interacoes.filter(i => i.evento === "bot_inventou").length,
+      abandonos: interacoes.filter(i => i.evento === "abandono_detectado").length
     };
 
     const prompt = `Você é um analista de atendimento do Candiá Bar (bar de samba em BH). Analise as interações do dia ${dia} e gere um relatório objetivo em português.
@@ -946,9 +979,22 @@ Conversas: X | Reservas: X | Conversão: X%
 ✅ RESERVAS FECHADAS: X
 
 ❌ RESERVAS NÃO FECHADAS: X
+Para cada abandono (evento=abandono_detectado) OU escalada, classifique o MOTIVO com base na última mensagem do cliente + histórico. Categorias possíveis (use exatamente estes rótulos, ou "outros" se nada bater):
+- poucos_lugares (grupo maior que o limite do dia)
+- horario_cedo (não consegue chegar até 15h sábado / 14h domingo / 19h etc)
+- area_externa (não aceitou reserva na calçada/descoberta)
+- couvert (valor da entrada foi um obstáculo)
+- data_indisponivel (esgotado, quis outra data e sumiu)
+- programacao (não gostou da atração ou falta de info)
+- politica_reserva (não gostou das condições — tolerância, lugares sentados, formato)
+- sem_resposta (cliente sumiu sem dar razão clara)
+- duvida_nao_respondida (bot não soube responder e cliente sumiu)
+- outros
+
+Formato:
 Motivos:
 • [emoji] Motivo — X casos
-  [username/ID de cada caso]
+  [username/ID de cada caso, um por linha]
 
 🔴 PROBLEMAS TÉCNICOS DO BOT: X
 [Para cada problema:]
@@ -1252,6 +1298,17 @@ async function verificarFollowUpsPendentes() {
       if (await redisGet(`humano_informou:${userId}`)) {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
+
+      // registra abandono ANTES de enviar o follow-up
+      try {
+        const hist = await getHistory(userId);
+        const ultimaClienteMsg = [...(hist || [])].reverse().find(h => h.role === "user")?.content || null;
+        await registrarInteracao("abandono_detectado", {
+          senderId: userId,
+          mensagemCliente: ultimaClienteMsg,
+          motivo: "cliente não respondeu em 6h após condições/última resposta (worker)"
+        });
+      } catch {}
 
       await redisSet(`echo_bot:${userId}`, "1", 180);
       await sendInstagramMessage(userId, mensagem);
@@ -2750,6 +2807,17 @@ async function agendarFollowUp(userId) {
       if (await redisGet(`humano_informou:${userId}`)) {
         mensagem = "Oi! Só passando pra saber se ficou alguma dúvida 😊 Se quiser, a gente segue por aqui.";
       }
+
+      // registra abandono ANTES de enviar o follow-up
+      try {
+        const hist = await getHistory(userId);
+        const ultimaClienteMsg = [...(hist || [])].reverse().find(h => h.role === "user")?.content || null;
+        await registrarInteracao("abandono_detectado", {
+          senderId: userId,
+          mensagemCliente: ultimaClienteMsg,
+          motivo: "cliente não respondeu em 6h após condições/última resposta (setTimeout)"
+        });
+      } catch {}
 
       await redisSet(`echo_bot:${userId}`, "1", 180);
       await sendInstagramMessage(userId, mensagem);

@@ -3265,7 +3265,43 @@ Responda APENAS o JSON válido, sem markdown.`,
     return;
   }
 
-if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
+if (cmd === "/desescalar-todos" || cmd === "/desescalar_todos") {
+    try {
+      const res = await fetch(`${UPSTASH_URL}/keys/conversa_escalada:*`, {
+        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+      });
+      const data = await res.json();
+      const keys = data.result || [];
+      if (keys.length === 0) {
+        await notifyOwner("✅ Nenhuma conversa escalada no momento.");
+        return;
+      }
+      let reprocessadas = 0;
+      const detalhes = [];
+      for (const key of keys) {
+        const userId = key.replace("conversa_escalada:", "");
+        await limparConversaEscalada(userId);
+        const username = await redisGet(`ig_username:${userId}`);
+        detalhes.push(`• ${username ? `@${username}` : `ID:${userId}`}`);
+        const pending = await getPendingMessages(userId);
+        if (pending.length > 0) {
+          const newToken = `${userId}_${Date.now()}`;
+          await setDebounceToken(userId, newToken);
+          processMessages(userId, newToken);
+          reprocessadas++;
+        }
+      }
+      await notifyOwner(
+        `✅ ${keys.length} conversa(s) desescalada(s). ${reprocessadas} com mensagens na fila reprocessadas.\n\n` +
+        detalhes.join("\n")
+      );
+    } catch (err) {
+      await notifyOwner(`⚠️ Erro em /desescalar-todos: ${err.message}`);
+    }
+    return;
+  }
+
+  if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
     const parts = raw.split(" ");
     
     // sem argumento = retoma todos
@@ -3473,6 +3509,7 @@ if (cmd === "/retomar" || cmd.startsWith("/retomar ")) {
 /pausar — Pausa o bot globalmente (até 7 dias)
 /retomar — Despausa TODAS conversas pausadas e reprocessa filas
 /retomar ID|@user — Reinjeta a última mensagem do cliente e reprocessa (use quando o cliente já mandou mas o bot ignorou)
+/desescalar-todos — Limpa flag de escalada em TODAS as conversas escaladas e reprocessa filas pendentes
 
 📅 CONFIGURAÇÃO POR DATA
 /data DD/MM — Configura briefing livre para uma data (responda em seguida com o texto)

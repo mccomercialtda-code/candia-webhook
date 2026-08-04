@@ -4768,14 +4768,34 @@ if (hasMedia && !isOnlyPhoneNumber(message)) {
     console.log(`Mídia/card recebido de ${senderId} com contexto de contato já detectado — ignorando bloqueio de mídia.`);
     return;
   }
-  // se chegou de anúncio (referral), não enviar a mensagem de "apenas texto" — ignorar silenciosamente
+  // NÃO escalar mais. Mandar saudação leve e agendar follow-up.
+  // Se o cliente responder com texto depois, entra pelo fluxo normal.
+  // Se sumir, o follow-up de 6h alerta.
   const referralMidia = messaging?.referral || messaging?.message?.referral;
-  if (referralMidia) {
-    console.log(`Mídia recebida com referral de anúncio para ${senderId} — ignorando silenciosamente`);
+  // detecta share/reel/template como sinal de resposta a anúncio mesmo sem campo referral explícito
+  const anexoTipoAd = messaging?.message?.attachments?.some(a =>
+    ["share", "ig_reel", "template", "story_mention"].includes(a.type)
+  );
+  const chegouDeAnuncio = !!(referralMidia || anexoTipoAd);
+  const jaMandouSaudacaoMidia = await redisGet(`saudacao_midia_enviada:${senderId}`);
+  if (jaMandouSaudacaoMidia) {
+    console.log(`Mídia/card adicional recebido de ${senderId} — saudação já enviada, ignorando este evento`);
     return;
   }
-  // Mídia sem texto — escalar silenciosamente sem responder ao cliente
-  await escalarConversa(senderId, "Cliente enviou mídia sem texto");
+  if (!(await isHorarioComercial())) {
+    console.log(`Mídia/card recebido de ${senderId} fora do horário — aguardando texto ou próximo horário`);
+    return;
+  }
+  const saudacao = chegouDeAnuncio
+    ? "Oi! Seja bem-vindo ao Candiá 🎉 Como posso te ajudar?"
+    : "Oi! Recebi sua mensagem 😊 Pode me contar como posso ajudar? Respondo por aqui mesmo por texto.";
+  await redisSet(`echo_bot:${senderId}`, "1", 180);
+  await sendInstagramMessage(senderId, saudacao);
+  await salvarUltimaRespostaBot(senderId, saudacao);
+  // marca que já saudamos este cliente após mídia, evita saudar 2x se vier outra mídia junto
+  await redisSet(`saudacao_midia_enviada:${senderId}`, "1", 3600);
+  await agendarFollowUp(senderId);
+  console.log(`Mídia/card de ${senderId} — saudação enviada${chegouDeAnuncio ? " (anúncio)" : ""}, follow-up agendado`);
   return;
 }
 

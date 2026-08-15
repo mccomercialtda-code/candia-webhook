@@ -2033,6 +2033,16 @@ FLUXO DE RESERVA
   - Grupo grande (ex.: 40 pessoas para sábado, quando limite é 8) NÃO significa que deve enviar variante descoberta — isso é tratado SEPARADAMENTE pela regra de "lugares garantidos", que menciona quantos ficam sentados e o restante em pé
   - Exemplo ERRADO: cliente pede 40 pessoas para sábado, contexto diz "tipo: coberto (7 vagas restantes)" → NÃO enviar variante descoberta ("provavelmente sua reserva ficará na área externa") só porque o grupo é grande
   - Exemplo CERTO: mesma situação → enviar variante COBERTA (sem parágrafo de área externa). O tamanho do grupo é abordado depois via lugares garantidos, sem trocar a variante da mensagem exata
+
+* ADAPTAÇÃO DA LINHA DE LUGARES na mensagem exata (regra crítica):
+  - Se o cliente JÁ informou o número de pessoas N e N é MENOR OU IGUAL ao limite do dia (sábado 8, sexta 12, domingo 15), SUBSTITUIR APENAS a linha "reservamos até X lugares sentados" por "reservamos os N lugares sentados pra vocês" (usando o número N que o cliente pediu). O restante da mensagem exata continua idêntico, palavra por palavra.
+  - Exemplo — cliente pede 5 pessoas sábado (limite 8):
+    → Substituir "reservamos até 8 lugares sentados (mas pode chamar todo mundo..." por
+      "reservamos 5 lugares sentados pra vocês (mas pode chamar todo mundo..."
+  - Se o cliente pediu N MAIOR que o limite (ex.: 15 pessoas para sábado), MANTER a linha original "reservamos até 8 lugares sentados" (o texto original já sinaliza que a galera fica em pé)
+  - Se o cliente ainda NÃO informou número de pessoas, manter a linha original "reservamos até X lugares sentados"
+  - Essa é a ÚNICA alteração permitida no texto da mensagem exata
+
 * A mensagem exata começa DIRETAMENTE com "Será um prazer recebê-los aqui 😊" — a primeira palavra da resposta deve ser "Será"
 * PROIBIDO qualquer frase antes da mensagem exata, mesmo que o cliente tenha perguntado outra coisa antes, mesmo que seja para responder sobre bolo, programação ou qualquer outro assunto
 * Se o cliente perguntou outra coisa junto com a reserva, responder a outra pergunta em mensagem SEPARADA, depois enviar a mensagem exata
@@ -3912,6 +3922,26 @@ try {
   console.error("Erro ao consultar escalar_data:* para fallback por dia-da-semana:", err);
 }
 
+// PRIORIDADE ABSOLUTA: cliente pedindo confirmação de reserva sem match no Redis
+// (o bot pediria nome e diria "não consigo confirmar" — melhor escalar direto)
+if (!jaTemReserva) {
+  const padroesConfirmacaoReserva = [
+    /\bconfirm(ar|ando|a|o|e|em|ada|ado)\s+(a\s+)?(minha\s+)?reserva\b/i,
+    /\bminha\s+reserva\b/i,
+    /\breserva\s+(pra|para)\s+(hoje|amanh[ãa]|amanh[ãa]\s+de|essa\s+noite|essa\s+tarde|domingo|s[áa]bado|sexta|quinta|quarta|ter[çc]a|segunda)\b/i,
+    /\btudo\s+certo\s+(com\s+minha\s+reserva|pra\s+(hoje|amanh[ãa]|manh[ãa])|com\s+minha\s+mesa)\b/i,
+    /\bs[óo]\s+confirmando\b/i,
+    /\bconfirmando\s+(minha\s+)?(presen[çc]a|reserva|mesa)\b/i,
+    /\breserva\s+t[áa]\s+(de\s+p[ée]|confirmada|ok)\b/i
+  ];
+  const pareceConfirmacaoReserva = padroesConfirmacaoReserva.some(r => r.test(textoLower));
+  if (pareceConfirmacaoReserva) {
+    console.log(`Cliente ${userId} pediu confirmação de reserva mas não há reserva_confirmada — escalando silencioso`);
+    await escalarConversa(userId, "Cliente perguntou sobre reserva anterior sem match no sistema");
+    return;
+  }
+}
+
 // PRIORIDADE ABSOLUTA: se cliente quer reserva para hoje, escalar silenciosamente
 // antes de consultar disponibilidade, antes de mensagem exata, antes de qualquer outra lógica
 if (!jaTemReserva) {
@@ -4444,6 +4474,24 @@ Regras OBRIGATÓRIAS:
     await redisDel(`contato_detectado:${userId}`);
     await cancelarFollowUp(userId);
   } else {
+  // guard: não gravar reserva sem número de pessoas (evita reserva com total_esperado=0)
+  const totalPessoas = parseInt(reservation.total_esperado);
+  if (!totalPessoas || isNaN(totalPessoas) || totalPessoas <= 0) {
+    console.error(`Reserva bloqueada por total_esperado inválido para ${userId}:`, reservation.total_esperado);
+    const usernameBlock = await redisGet(`ig_username:${userId}`);
+    await notifyOwner(
+      `⚠️ Reserva BLOQUEADA — total de pessoas não informado!\n` +
+      `👤 Cliente: ${userId}${usernameBlock ? ` (@${usernameBlock})` : ""}\n` +
+      `📋 Aniversariante: ${reservation.aniversariante || "—"}\n` +
+      `📅 Data: ${reservation.data || "—"}\n` +
+      `📞 Contato: ${reservation.contato || "—"}\n\n` +
+      `Bot tentou fechar sem perguntar quantas pessoas. Conversa escalada.`
+    );
+    registrarInteracao("data_invalida", { senderId: userId, motivo: "total_esperado ausente ou 0", dadosReserva: reservation }).catch(() => {});
+    await escalarConversa(userId, "Bot tentou gravar reserva sem número de pessoas");
+    return;
+  }
+
   let salvou = false;
   try {
     salvou = await salvarReservaNaNotion(reservation, userId);

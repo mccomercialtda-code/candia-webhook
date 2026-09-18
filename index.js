@@ -603,10 +603,15 @@ async function buscarPageIdPorInstagram(userId) {
 }
 
 // retorna a data BR (DD/MM/AAAA) da reserva mais recente do cliente, ou null
-async function getDataReservaCliente(userId) {
+// busca reserva mais recente FUTURA do cliente no Notion (data >= hoje BRT)
+// retorna objeto completo ou null (usa cache Redis 24h)
+async function buscarReservaCompletaPorInstagram(userId) {
   if (!userId) return null;
-  const cached = await redisGet(`reserva_data:${userId}`);
-  if (cached) return cached;
+  const cacheKey = `reserva_completa:${userId}`;
+  const cached = await redisGet(cacheKey);
+  if (cached) {
+    try { return JSON.parse(cached); } catch {}
+  }
   try {
     const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
       method: "POST",
@@ -617,21 +622,59 @@ async function getDataReservaCliente(userId) {
       },
       body: JSON.stringify({
         filter: { property: "Instagram ID", rich_text: { equals: userId } },
-        sorts: [{ property: "Data", direction: "descending" }],
-        page_size: 1
+        sorts: [{ property: "Data", direction: "ascending" }],
+        page_size: 20
       })
     });
     const data = await res.json();
     if (!data.results || data.results.length === 0) return null;
-    const dataISO = data.results[0].properties?.Data?.rich_text?.[0]?.text?.content || "";
-    if (!dataISO) return null;
-    const dataBR = formatDateBR(dataISO);
-    await redisSet(`reserva_data:${userId}`, dataBR, 86400 * 30);
-    return dataBR;
+
+    const hojeISO = dataBRToISOShort(getDataBrasilia()); // YYYY-MM-DD
+    // filtra só datas >= hoje
+    const futuras = data.results.filter(p => {
+      const dISO = p.properties?.Data?.rich_text?.[0]?.text?.content || "";
+      return dISO && dISO >= hojeISO;
+    });
+    if (futuras.length === 0) return null;
+
+    // pega a mais próxima (primeira, já ordenada asc)
+    const page = futuras[0];
+    const props = page.properties || {};
+    const dataISO = props.Data?.rich_text?.[0]?.text?.content || "";
+    const registro = {
+      pageId: page.id,
+      dataISO,
+      dataBR: dataISO ? formatDateBR(dataISO) : null,
+      dia: props.Dia?.rich_text?.[0]?.text?.content || null,
+      aniversariante: props.Nome?.title?.[0]?.text?.content || null,
+      contato: props.Contato?.rich_text?.[0]?.text?.content || null,
+      lugares: props.Lugares?.number ?? null,
+      total_esperado: props["Total esperado"]?.number ?? null,
+      local: props.Local?.select?.name || null,
+      observacao: props["Observações"]?.rich_text?.[0]?.text?.content || null
+    };
+    await redisSet(cacheKey, JSON.stringify(registro), 86400); // 24h
+    return registro;
   } catch (err) {
-    console.error(`Erro ao buscar data da reserva no Notion para ${userId}:`, err);
+    console.error(`Erro ao buscar reserva completa no Notion para ${userId}:`, err);
     return null;
   }
+}
+
+async function getDataReservaCliente(userId) {
+  if (!userId) return null;
+  // primeiro tenta reserva completa (filtrada por futuras)
+  const reserva = await buscarReservaCompletaPorInstagram(userId);
+  if (reserva && reserva.dataBR) {
+    // atualiza também o cache legado
+    await redisSet(`reserva_data:${userId}`, reserva.dataBR, 86400);
+    return reserva.dataBR;
+  }
+  // se não achou reserva futura, limpa flags obsoletas
+  await redisDel(`reserva_data:${userId}`);
+  await redisDel(`reserva_confirmada:${userId}`);
+  console.log(`Cliente ${userId} sem reserva futura no Notion — flags obsoletas limpas`);
+  return null;
 }
 
 async function cancelarReservaNoNotion(userId) {
@@ -1778,18 +1821,20 @@ JOGOS / TRANSMISSÕES
 
 MÚSICA AO VIVO
 
-* Temos música ao vivo de terça a domingo (segunda o bar está fechado)
-* HORÁRIOS DA MÚSICA AO VIVO:
-  - Terça a sábado: música ao vivo até aproximadamente 22h
-  - Domingo: música ao vivo até aproximadamente 18h
+* NÃO É REGRA FIXA que temos música ao vivo em todos os dias. A programação varia por data. SEMPRE consultar a PROGRAMAÇÃO DO DIA (no contexto) para a data específica que o cliente mencionou antes de afirmar qualquer coisa sobre música ao vivo naquele dia.
+* NUNCA afirmar genericamente "temos música ao vivo de terça a domingo" — isso pode estar errado para dias específicos sem programação marcada
+* HORÁRIOS TÍPICOS quando há música ao vivo (só usar se PROGRAMAÇÃO DO DIA existir para a data):
+  - Terça a sábado: até aproximadamente 22h
+  - Domingo: até aproximadamente 18h
 * NUNCA dizer que a música vai até a meia-noite, até o fechamento, "até fechar" ou qualquer horário diferente dos acima
 * NUNCA dizer que o bar fecha à meia-noite quando o cliente perguntar sobre música — responda apenas com o horário da música
-* Sexta a domingo: samba
-* Terça a quinta: programação variada (samba, pagode, brasilidades, etc)
+* Sexta a domingo: geralmente samba (só afirmar se PROGRAMAÇÃO DO DIA confirmar)
+* Terça a quinta: geralmente programação variada (só afirmar se PROGRAMAÇÃO DO DIA confirmar)
 * Se o cliente perguntar onde é a música, onde toca o samba, ou onde fica o palco, responder: "A música normalmente fica na parte interna do bar 😊"
 * PROGRAMAÇÃO DA DATA CONSULTADA — regra crítica:
   - Se existir PROGRAMAÇÃO DO DIA neste prompt, use OBRIGATORIAMENTE esses dados para responder
   - Se o cliente perguntou sobre programação/música de uma data específica e NÃO houver PROGRAMAÇÃO DO DIA no prompt (a data foi consultada e não retornou nada), responder EXATAMENTE: "Ainda não temos a confirmação sobre música ao vivo nesse dia 😊 Você pode ir acompanhando a programação no tópico 'Agenda' em nossos destaques!"
+  - NUNCA dizer "vai ter samba/música" nem "não vai ter samba/música" só com base em padrão de dia da semana — sempre verificar programação
   - NUNCA dizer "não vai ter samba"/"não vai ter música" só porque a programação ainda não foi divulgada — use a resposta padrão acima
 * Ao informar programação, usar SEMPRE o estilo musical exato que consta no Notion — nunca generalizar
 * @rayramirandaa toca brasilidades — NUNCA informar como samba
@@ -2913,7 +2958,8 @@ async function handleTelegramCommand(text) {
     return;
   }
        
- if (cmd.startsWith("/start")) {
+ if (cmd.startsWith("/start") || cmd.startsWith("/reativar")) {
+    // /reativar é alias de /start pra retrocompatibilidade
     const parts = raw.split(" ");
     if (parts.length > 1) {
       let userId = parts[1].trim();
@@ -3558,6 +3604,7 @@ if (cmd === "/desescalar-todos" || cmd === "/desescalar_todos") {
 ▶️ ATIVAÇÃO / PAUSA
 /start — Reativa bot globalmente e libera fora do horário por 1h
 /start ID|@user — Reativa usuário específico (limpa pausa/escalada/follow-up) e libera fora do horário 1h
+/reativar ID|@user — Alias de /start (retrocompatibilidade)
 /pausar — Pausa o bot globalmente (até 7 dias)
 /retomar — Despausa TODAS conversas pausadas e reprocessa filas
 /retomar ID|@user — Reinjeta a última mensagem do cliente e reprocessa (use quando o cliente já mandou mas o bot ignorou)
@@ -3949,22 +3996,50 @@ try {
   console.error("Erro ao consultar escalar_data:* para fallback por dia-da-semana:", err);
 }
 
-// PRIORIDADE ABSOLUTA: cliente pedindo confirmação de reserva sem match no Redis
-// (o bot pediria nome e diria "não consigo confirmar" — melhor escalar direto)
-if (!jaTemReserva) {
+// PRIORIDADE ABSOLUTA: cliente pedindo confirmação de reserva existente
+// Se tiver reserva no Notion, responde com dados; se não tiver, escala silencioso
+{
+  // padrões que denotam EXPLICITAMENTE pedido de confirmação de reserva já feita
   const padroesConfirmacaoReserva = [
     /\bconfirm(ar|ando|a|o|e|em|ada|ado)\s+(a\s+)?(minha\s+)?reserva\b/i,
-    /\bminha\s+reserva\b/i,
-    /\breserva\s+(pra|para)\s+(hoje|amanh[ãa]|amanh[ãa]\s+de|essa\s+noite|essa\s+tarde|domingo|s[áa]bado|sexta|quinta|quarta|ter[çc]a|segunda)\b/i,
-    /\btudo\s+certo\s+(com\s+minha\s+reserva|pra\s+(hoje|amanh[ãa]|manh[ãa])|com\s+minha\s+mesa)\b/i,
+    /\btudo\s+certo\s+(com\s+minha\s+reserva|com\s+minha\s+mesa|pra\s+(hoje|amanh[ãa]|manh[ãa]))\b/i,
     /\bs[óo]\s+confirmando\b/i,
+    /\bs[óo]\s+passando\s+pra\s+confirmar\b/i,
     /\bconfirmando\s+(minha\s+)?(presen[çc]a|reserva|mesa)\b/i,
-    /\breserva\s+t[áa]\s+(de\s+p[ée]|confirmada|ok)\b/i
+    /\breserva\s+t[áa]\s+(de\s+p[ée]|confirmada|ok|certa)\b/i,
+    /\bminha\s+reserva\s+(t[áa]|est[áa]|foi)\b/i
   ];
-  const pareceConfirmacaoReserva = padroesConfirmacaoReserva.some(r => r.test(textoLower));
+  // guarda: NÃO é confirmação se cliente usou verbos de INTENÇÃO NOVA
+  const verbosNovaReserva = [
+    /\bgostaria\s+de\s+(reserv|fazer\s+(uma\s+)?reserva|verific)/i,
+    /\bquero\s+(reservar|fazer\s+(uma\s+)?reserva)/i,
+    /\bposso\s+(reservar|fazer\s+(uma\s+)?reserva)/i,
+    /\bconsigo\s+(reservar|fazer\s+(uma\s+)?reserva)/i,
+    /\btem\s+como\s+(reservar|fazer\s+reserva)/i,
+    /\bverificar\s+(a\s+)?(possibilidade|disponibilidade)/i,
+    /\breservar\s+(uma|mesa|lugar)/i
+  ];
+  const pareceIntencaoNova = verbosNovaReserva.some(r => r.test(textoLower));
+  const pareceConfirmacaoReserva = !pareceIntencaoNova && padroesConfirmacaoReserva.some(r => r.test(textoLower));
   if (pareceConfirmacaoReserva) {
-    console.log(`Cliente ${userId} pediu confirmação de reserva mas não há reserva_confirmada — escalando silencioso`);
-    await escalarConversa(userId, "Cliente perguntou sobre reserva anterior sem match no sistema");
+    // busca reserva no Notion por Instagram ID (só futuras)
+    const reserva = await buscarReservaCompletaPorInstagram(userId);
+    if (reserva && reserva.dataBR) {
+      const lugaresInfo = reserva.total_esperado ? `\n👥 ${reserva.total_esperado} pessoas` : "";
+      const nomeInfo = reserva.aniversariante ? `\n📋 Nome: ${reserva.aniversariante}` : "";
+      const resposta =
+        `Sim, sua reserva está confirmada! 🎉\n\n` +
+        `📅 ${reserva.dataBR}${reserva.dia ? ` (${reserva.dia})` : ""}${lugaresInfo}${nomeInfo}\n\n` +
+        `A gente te espera lá! 🧡`;
+      await redisSet(`echo_bot:${userId}`, "1", 180);
+      await sendInstagramMessage(userId, resposta);
+      await salvarUltimaRespostaBot(userId, resposta);
+      console.log(`Cliente ${userId} pediu confirmação — reserva encontrada e confirmada automaticamente`);
+      return;
+    }
+    // sem reserva futura no Notion → escala silencioso
+    console.log(`Cliente ${userId} pediu confirmação mas não há reserva futura no Notion — escalando silencioso`);
+    await escalarConversa(userId, "Cliente perguntou sobre reserva mas não há registro futuro no Notion");
     return;
   }
 }
@@ -4011,8 +4086,9 @@ if (!jaTemReserva) {
     textoLower.includes("hoje cedo");
 
   const querReservaHoje =
-    algumaDataEhHoje ||
-    (mencionaHoje && temContextoReserva && !temDataFuturaExplicita);
+    temContextoReserva &&
+    (algumaDataEhHoje || mencionaHoje) &&
+    !temDataFuturaExplicita;
 
   if (querReservaHoje) {
     console.log(`Reserva para hoje detectada de ${userId} — escalada silenciosa antes de qualquer fluxo`);

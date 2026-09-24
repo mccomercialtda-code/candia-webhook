@@ -2233,6 +2233,12 @@ REGRAS GERAIS DO FLUXO (APLICAM-SE A TODOS OS DIAS)
   - NÃO tentar convencer, NÃO pedir dados, NÃO gerar bloco de reserva
   - Se o cliente responder que quer fazer a reserva mesmo assim (aceitando o risco), pedir para confirmar que vai chegar até o horário-limite. Só gerar [RESERVA:] se cliente confirmar explicitamente que chegará no horário
 
+* REGRA ABSOLUTA — NUNCA FINGIR CONFIRMAÇÃO:
+  - NUNCA diga "combinado", "reserva confirmada", "reserva feita", "anotado", "tudo certo", "perfeito, sua reserva está feita", "então tá reservado" ou qualquer expressão que sinalize reserva concluída SEM incluir o bloco [RESERVA: ...] na mesma resposta
+  - Se algum dos 4 dados obrigatórios (data, aniversariante, contato, total_esperado) está faltando, PERGUNTE o dado específico que falta — nunca finja que a reserva foi feita
+  - "Combinado!" só pode ser dito quando você EMITE o bloco [RESERVA:] junto — nunca antes de todos os dados estarem presentes
+  - Se cliente diz "combinado", "pode ser", "fechado" mas ainda falta dado, RESPONDA pedindo o que falta em vez de ecoar "combinado" de volta
+
 * MODELO OBRIGATÓRIO DA MENSAGEM DE CONFIRMAÇÃO DE RESERVA (qualquer dia da semana):
 
 "Reserva confirmada! 🎉
@@ -4486,6 +4492,29 @@ Regras OBRIGATÓRIAS:
   await saveHistory(userId, history);
 
   const reservation = extractReservation(reply);
+
+  // guard: se bot disse "combinado/confirmada/anotado" mas NÃO emitiu [RESERVA:], falseou confirmação
+  if (!reservation) {
+    const replyBaixo = String(reply || "").toLowerCase();
+    const padroesConfirmacaoFalsa = [
+      /\bcombinad[oa]\b/,
+      /\breserva\s+(confirmada|feita|anotada|garantida|registrada)\b/,
+      /\banotad[oa]\b(?!\s+(seu|nome|contato|telefone))/,
+      /\btudo\s+certo(!|\.|,|\s+ent[ãa]o|$)/,
+      /\bperfeito[!,.\s]+(sua|a)\s+reserva\b/,
+      /\best[áa]\s+reservad[oa]\b/,
+      /\bfeito!?\s+(sua\s+)?reserva\b/,
+      /\bent[ãa]o\s+t[áa]\s+(reservad|marcad)/
+    ];
+    const falseouConfirmacao = padroesConfirmacaoFalsa.some(r => r.test(replyBaixo));
+    if (falseouConfirmacao) {
+      console.error(`Bot falseou confirmação para ${userId} — reply sem [RESERVA:] mas dizendo combinado/etc`);
+      registrarInteracao("bot_inventou", { senderId: userId, motivo: "bot disse 'combinado/confirmada' sem gerar [RESERVA:]", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
+      await escalarConversa(userId, "Bot falseou confirmação de reserva sem gerar [RESERVA:]");
+      return;
+    }
+  }
+
   if (reservation) {
   const dispFinal = await verificarDisponibilidade(reservation.data);
 
@@ -4577,6 +4606,31 @@ Regras OBRIGATÓRIAS:
     await redisDel(`contato_detectado:${userId}`);
     await cancelarFollowUp(userId);
   } else {
+  // guard: não gravar reserva sem data válida (evita reserva sem data ou com placeholder)
+  const dataStr = String(reservation.data || "").trim();
+  const partesData = dataStr.split("/");
+  const dataValida =
+    dataStr &&
+    partesData.length === 3 &&
+    partesData.every(p => /^\d+$/.test(p)) &&
+    !/[A-Za-z]/.test(dataStr); // rejeita DD/MM/AAAA literal
+  if (!dataValida) {
+    console.error(`Reserva bloqueada por data ausente/inválida para ${userId}:`, reservation.data);
+    const usernameBlock = await redisGet(`ig_username:${userId}`);
+    await notifyOwner(
+      `⚠️ Reserva BLOQUEADA — data ausente ou inválida!\n` +
+      `👤 Cliente: ${userId}${usernameBlock ? ` (@${usernameBlock})` : ""}\n` +
+      `📋 Aniversariante: ${reservation.aniversariante || "—"}\n` +
+      `📅 Data recebida: ${reservation.data || "(vazia)"}\n` +
+      `👥 Pessoas: ${reservation.total_esperado || "—"}\n` +
+      `📞 Contato: ${reservation.contato || "—"}\n\n` +
+      `Bot tentou fechar sem data válida. Conversa escalada.`
+    );
+    registrarInteracao("data_invalida", { senderId: userId, motivo: "data ausente ou mal formada no [RESERVA:]", dadosReserva: reservation }).catch(() => {});
+    await escalarConversa(userId, "Bot tentou gravar reserva sem data válida");
+    return;
+  }
+
   // guard: não gravar reserva sem número de pessoas (evita reserva com total_esperado=0)
   const totalPessoas = parseInt(reservation.total_esperado);
   if (!totalPessoas || isNaN(totalPessoas) || totalPessoas <= 0) {

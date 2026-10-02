@@ -483,7 +483,7 @@ async function salvarReservaNaNotion(data, instagramId) {
     return false;
   }
 
-  // Validação de data inválida ou placeholder — notifica mas grava mesmo assim
+  // Validação de data: placeholder, mal formada, mês/dia inválido, ou data no passado — BLOQUEIA gravação
   const dataStr = String(data.data || "");
   const dataTemPlaceholder = dataStr.includes("DD") || dataStr.includes("MM") || dataStr.includes("AAAA") || dataStr.includes("AA");
   const partesValidacao = dataStr.split("/");
@@ -491,19 +491,39 @@ async function salvarReservaNaNotion(data, instagramId) {
     !dataStr ||
     partesValidacao.length !== 3 ||
     partesValidacao.some(p => isNaN(parseInt(p)));
-  if (dataTemPlaceholder || dataMalFormada) {
-    console.error(`Reserva com data inválida: "${dataStr}" para ${instagramId}`);
+
+  let mesDiaInvalido = false;
+  let dataNoPassado = false;
+  if (!dataMalFormada && !dataTemPlaceholder) {
+    const diaN = parseInt(partesValidacao[0]);
+    const mesN = parseInt(partesValidacao[1]);
+    const anoN = parseInt(partesValidacao[2]);
+    mesDiaInvalido = diaN < 1 || diaN > 31 || mesN < 1 || mesN > 12;
+    if (!mesDiaInvalido) {
+      const hojeBRT = getDataBrasilia();
+      const dataReserva = new Date(`${anoN}-${String(mesN).padStart(2,"0")}-${String(diaN).padStart(2,"0")}T00:00:00-03:00`);
+      dataNoPassado = dataReserva < hojeBRT;
+    }
+  }
+
+  if (dataTemPlaceholder || dataMalFormada || mesDiaInvalido || dataNoPassado) {
+    const motivo = dataNoPassado
+      ? `data no passado: ${dataStr}`
+      : mesDiaInvalido
+        ? `dia/mês inválido: ${dataStr}`
+        : `data mal formada: ${dataStr}`;
+    console.error(`Reserva BLOQUEADA — ${motivo} para ${instagramId}`);
     await notifyOwner(
-      `⚠️ Reserva gravada com data INVÁLIDA!\n` +
+      `⚠️ Reserva BLOQUEADA — ${motivo}!\n` +
       `👤 Cliente: ${instagramId}\n` +
       `📋 Nome: ${data.aniversariante || "—"}\n` +
-      `📅 Data inválida: ${dataStr || "(vazia)"}\n` +
+      `📅 Data recebida: ${dataStr || "(vazia)"}\n` +
       `👥 Pessoas: ${data.total_esperado || "—"}\n` +
       `📞 Contato: ${data.contato || "—"}\n\n` +
-      `Verifique e corrija manualmente.`
+      `Confirme a data real com o cliente e grave manualmente.`
     );
-    registrarInteracao("data_invalida", { senderId: instagramId, motivo: `data mal formada: ${dataStr}`, dadosReserva: data }).catch(() => {});
-    // segue o fluxo e tenta gravar mesmo assim (briefing pede para gravar)
+    registrarInteracao("data_invalida", { senderId: instagramId, motivo, dadosReserva: data }).catch(() => {});
+    return false; // bloqueia gravação
   }
 
   const properties = {
@@ -4246,6 +4266,17 @@ if (dataPrincipal) {
 
 const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
+// detecta se dataPrincipal está no passado (cliente provavelmente errou ano/mês)
+let dataPrincipalNoPassado = false;
+if (dataPrincipal) {
+  try {
+    const [diaDP, mesDP, anoDP] = dataPrincipal.split("/");
+    const dtDP = new Date(`${anoDP}-${mesDP.padStart(2,"0")}-${diaDP.padStart(2,"0")}T00:00:00-03:00`);
+    const hojeDP = getDataBrasilia();
+    dataPrincipalNoPassado = !isNaN(dtDP.getTime()) && dtDP < hojeDP;
+  } catch {}
+}
+
 const regrasDiaConsulta = dataISOConsulta
   ? await getRegraDia(dataISOConsulta)
   : null;
@@ -4322,6 +4353,11 @@ if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().incl
   await setDebounceToken(userId, `cancelled_${Date.now()}`);
   await cancelarFollowUp(userId);
   return;
+}
+
+if (dataPrincipalNoPassado) {
+  const hojeStr = dateToBR(getDataBrasilia());
+  systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]⚠️ DATA NO PASSADO: a data mencionada pelo cliente (${dataPrincipal}) já passou. Hoje é ${hojeStr}. REGRA OBRIGATÓRIA: NÃO confirmar reserva, NÃO enviar mensagem exata do dia, NÃO gerar [RESERVA:]. Em vez disso, responder: "Essa data (${dataPrincipal}) já passou 😅 Pode me confirmar a data correta da reserva?" e esperar o cliente confirmar a data certa antes de prosseguir. NUNCA presumir qual data o cliente quis dizer — sempre perguntar.[/SISTEMA]\n`;
 }
 
 if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia || (programacoesExtras && programacoesExtras.length > 0)) {

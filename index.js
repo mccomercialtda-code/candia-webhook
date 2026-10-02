@@ -30,7 +30,7 @@ const HORARIOS_ATENDIMENTO = {
 };
 
 const LIMITES = {
-  "sexta":   { coberto: 10, descoberto: 0,  total: 10 },
+  "sexta":   { coberto: 8,  descoberto: 2,  total: 10 },
   "sábado":  { coberto: 10, descoberto: 4,  total: 14 },
   "domingo": { coberto: 10, descoberto: 0,  total: 10 }
 };
@@ -1867,19 +1867,21 @@ MÚSICA AO VIVO
 
 COUVERT
 
-* Terça a quinta: R$12
-* Sexta a domingo: R$10
+* Terça, quarta e quinta: SEM couvert (não há cobrança de entrada)
+* Sexta: R$12
+* Sábado e domingo: R$10
 * Só mencionar se perguntarem
-* ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor
+* ATENÇÃO: sempre verificar o dia da data mencionada antes de informar o valor — se for terça/quarta/quinta, informar que NÃO há couvert nesses dias
 * NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
 * Informar couvert apenas se o cliente perguntar explicitamente
 
 ENTRADA / COUVERT
 
 * Entrada e couvert são a mesma coisa
-* Sempre há couvert (de terça a domingo)
-* Nunca dizer "não tem entrada"
-* NUNCA dizer "entrada gratuita", "entrada franca", "entrada livre"
+* De terça a quinta: NÃO há couvert
+* De sexta a domingo: SEMPRE há couvert (sexta R$12, sábado e domingo R$10)
+* Se cliente perguntar sobre entrada em terça/quarta/quinta, pode confirmar que não há cobrança
+* Nunca dizer "entrada gratuita", "entrada franca", "entrada livre" para sexta/sábado/domingo (sempre há couvert nesses dias)
 * NUNCA mencionar couvert, valor de entrada ou taxa na mensagem de confirmação da reserva
 * Informar couvert apenas se o cliente perguntar explicitamente
 
@@ -2262,6 +2264,15 @@ Nome: [nome completo do aniversariante]"
   - Terça a quinta: min(pessoas_informadas, 20)
 * NUNCA mostrar "Lugares garantidos" maior do que o cliente pediu — se ele pediu 4 e o limite é 15, o valor certo é 4 (não 15)
 * Se o número de pessoas ainda não foi informado, NÃO gerar o bloco de confirmação nem gravar a reserva — perguntar antes quantas pessoas vêm
+
+* REGRA ABSOLUTA — NUNCA ACEITAR "COLOCAR X LUGARES" ACIMA DO LIMITE DO DIA:
+  - Quando cliente disser "pode colocar X lugares" / "reserva pra X" / "coloca X pessoas sentadas" e X for MAIOR que o limite do dia (sábado 8, sexta 12, domingo 15, ter-qui 20), NÃO aceitar X como lugares reservados
+  - Sempre responder esclarecendo: "Nossa reserva no [dia] garante até [limite] lugares sentados — o grupo todo é super bem-vindo, mas a parte que exceder vai curtir em pé, como é tradicional da casa 😊"
+  - Depois gerar [RESERVA:] com lugares=limite_do_dia e total_esperado=X (número total do grupo)
+  - Exemplo — cliente pede "coloca 10 lugares" para sábado:
+    → ERRADO: aceitar 10 lugares sentados sem comentar
+    → CERTO: "Nossa reserva no sábado garante até 8 lugares sentados — o grupo de 10 é super bem-vindo, os 2 a mais ficam em pé curtindo o samba 😊" + [RESERVA: lugares=8, total_esperado=10, ...]
+  - A confirmação final deve usar "Lugares garantidos: 8" (limite do dia), NÃO 10 (que o cliente pediu)
 
 * NADA mais além desse modelo — sem frases extras, sem despedida animada, sem emojis adicionais, sem mencionar couvert, tolerância ou qualquer outra informação
 

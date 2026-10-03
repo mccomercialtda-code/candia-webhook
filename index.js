@@ -1985,7 +1985,8 @@ FEIJOADA
 
 * Servida aos finais de semana
 * Aos sábados tem valor promocional de R$20,00 e acompanha um copo de pilsen 300ml — até as 14h (depois deste horário preço normal do cardápio)
-* Só mencionar se o cliente perguntar
+* Também temos FEIJOADA VEGANA — se o cliente perguntar se temos opção vegana, confirmar: "Sim, temos feijoada vegana também 😊 Ela entra na mesma promoção da feijoada tradicional (R$20 aos sábados até as 14h, com copo de pilsen 300ml)"
+* Só mencionar feijoada (tradicional ou vegana) se o cliente perguntar
 * Nunca oferecer espontaneamente
 
 ALMOÇO EXECUTIVO (SEXTA)

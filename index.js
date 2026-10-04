@@ -2103,7 +2103,8 @@ FLUXO DE RESERVA
 * PRIORIDADE MÁXIMA: para reservas de SÁBADO, SEXTA e DOMINGO, seguir EXCLUSIVAMENTE o fluxo com mensagem exata definido abaixo — ignorar qualquer outra instrução genérica de fluxo de reserva
 * Remover qualquer uso de "quer seguir", "topa esse formato", "consegue chegar", "podemos seguir" — NUNCA usar essas expressões
 * A mensagem exata deve ser enviada DIRETAMENTE, sem nenhuma frase introdutória antes como "Deixa eu verificar", "Ótimo!", "Que legal!" ou qualquer prefácio — começar imediatamente com "Será um prazer recebê-los aqui 😊"
-* PROIBIDO ABSOLUTAMENTE responder qualquer variação de "deixa eu verificar a disponibilidade", "vou checar a disponibilidade", "deixa eu ver", "vou conferir", "um momento", "aguarda só um instante", "já te respondo" para qualquer pergunta sobre reserva, data ou disponibilidade. A disponibilidade JÁ FOI CONSULTADA pelo sistema antes desta resposta — os dados estão em DISPONIBILIDADE CONSULTADA acima quando existir, ou simplesmente seguir o fluxo do dia. Responder DIRETAMENTE com a mensagem exata do dia ou com a próxima pergunta do fluxo, sem fingir que vai verificar algo
+* PROIBIDO ABSOLUTAMENTE responder qualquer variação de "deixa eu verificar a disponibilidade", "vou checar a disponibilidade", "deixa eu ver", "vou conferir", "um momento", "aguarda só um instante", "já te respondo", "em breve retorno" para qualquer pergunta sobre reserva, data ou disponibilidade. A disponibilidade JÁ FOI CONSULTADA pelo sistema antes desta resposta — os dados estão em DISPONIBILIDADE CONSULTADA acima quando existir, ou simplesmente seguir o fluxo do dia. Responder DIRETAMENTE com a mensagem exata do dia ou com a próxima pergunta do fluxo, sem fingir que vai verificar algo
+* REGRA DE CONDUTA ABSOLUTA: se o cliente mandou apenas uma data (ex.: "7/11", "sábado dia 20", "08/02") em resposta a uma pergunta anterior sobre data, considere a data como DEFINIDA e vá DIRETO para a mensagem exata do dia correspondente (sábado/sexta/domingo) ou o fluxo genérico (ter/qua/qui). NÃO faça nenhum comentário de verificação, confirmação de dia-da-semana, nem perguntas intermediárias. A resposta deve começar imediatamente com "Será um prazer recebê-los aqui 😊" (para sáb/sex/dom) ou com a confirmação de disponibilidade do fluxo genérico. O sistema BLOQUEIA respostas que contenham "deixa eu verificar", "vou checar", "aguarda um momento", "já te respondo" — essas respostas são interceptadas e a conversa escala automaticamente para humano, prejudicando o atendimento.
 * Ao enviar a mensagem exata de sábado, sexta ou domingo, verificar OBRIGATORIAMENTE o tipo de disponibilidade no contexto:
   - Se tipo = 'coberto' → enviar versão SEM parágrafo de área externa
   - Se tipo = 'descoberto' → enviar versão COM parágrafo de área externa ("Ahh, e só mais um detalhe...")
@@ -4561,6 +4562,23 @@ Regras OBRIGATÓRIAS:
       await escalarConversa(userId, "Bot falseou confirmação de reserva sem gerar [RESERVA:]");
       return;
     }
+
+    // guard: bot NUNCA pode dizer "deixa eu verificar/checar disponibilidade" — já foi consultada
+    const padroesVerificar = [
+      /\bdeixa\s+eu\s+(verificar|checar|conferir|ver)/i,
+      /\bvou\s+(verificar|checar|conferir|ver)\s+(a\s+)?(disponibilidade|dispon|reserva)/i,
+      /\baguar?da?\s+(um\s+)?(momento|momentinho|minutinho|instante|\s*s[óo])/i,
+      /\bj[áa]\s+te?\s+respond[oe]/i,
+      /\bem\s+breve\s+(retorn|respond)/i,
+      /\b(ir|vou|deixa)\s+(ver|verific|checar)\b.*\bdispon/i
+    ];
+    const falouVerificar = padroesVerificar.some(r => r.test(replyBaixo));
+    if (falouVerificar) {
+      console.error(`Bot falou 'deixa eu verificar' para ${userId} — interceptando`);
+      registrarInteracao("bot_inventou", { senderId: userId, motivo: "bot disse 'deixa eu verificar disponibilidade' (proibido)", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
+      await escalarConversa(userId, "Bot disse 'deixa eu verificar' em vez de responder direto");
+      return;
+    }
   }
 
   if (reservation) {
@@ -4809,6 +4827,7 @@ if (escalation) {
       await redisSet(`msg_exata_data:${userId}`, dataPrincipal, 3600);
     }
   }
+  console.log(`Bot responde para ${userId} (${cleanReply.length} chars): ${cleanReply.substring(0, 500)}${cleanReply.length > 500 ? "..." : ""}`);
   await sendInstagramMessage(userId, cleanReply);
   await salvarUltimaRespostaBot(userId, cleanReply);
 

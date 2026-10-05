@@ -4545,37 +4545,47 @@ Regras OBRIGATÓRIAS:
   // guard: se bot disse "combinado/confirmada/anotado" mas NÃO emitiu [RESERVA:], falseou confirmação
   if (!reservation) {
     const replyBaixo = String(reply || "").toLowerCase();
+    // padrões específicos — "combinado" sozinho é muito benigno, exige contexto de encerramento
     const padroesConfirmacaoFalsa = [
-      /\bcombinad[oa]\b/,
-      /\breserva\s+(confirmada|feita|anotada|garantida|registrada)\b/,
-      /\banotad[oa]\b(?!\s+(seu|nome|contato|telefone))/,
-      /\btudo\s+certo(!|\.|,|\s+ent[ãa]o|$)/,
-      /\bperfeito[!,.\s]+(sua|a)\s+reserva\b/,
-      /\best[áa]\s+reservad[oa]\b/,
-      /\bfeito!?\s+(sua\s+)?reserva\b/,
-      /\bent[ãa]o\s+t[áa]\s+(reservad|marcad)/
+      /\bcombinad[oa][!.]*\s+(te\s+)?(esperam?|aguardam?|vemos)\b/i,
+      /\bcombinad[oa][!.]*\s+a\s+gente\s+(te\s+)?(espera|aguarda|v[êe])\b/i,
+      /\breserva\s+(confirmada|feita|anotada|garantida|registrada)\b/i,
+      /\btudo\s+certo\s+com\s+(a\s+)?(sua\s+)?reserva\b/i,
+      /\bperfeito[!,.\s]+(sua|a)\s+reserva\s+(est[áa]|foi|t[áa])\b/i,
+      /\best[áa]\s+reservad[oa](?!\s+(aqui|at[ée]))/i, // "está reservada" mas não "está reservada até as 15h" (que é da msg exata)
+      /\bfeito!?\s+(sua\s+)?reserva\s+(est[áa]|foi)\b/i,
+      /\bent[ãa]o\s+t[áa]\s+(reservad|marcad)/i,
+      /\breserva\s+t[áa]\s+(garantida|confirmada|feita)/i
     ];
-    const falseouConfirmacao = padroesConfirmacaoFalsa.some(r => r.test(replyBaixo));
-    if (falseouConfirmacao) {
-      console.error(`Bot falseou confirmação para ${userId} — reply sem [RESERVA:] mas dizendo combinado/etc`);
-      registrarInteracao("bot_inventou", { senderId: userId, motivo: "bot disse 'combinado/confirmada' sem gerar [RESERVA:]", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
+    let padraoConfFalsa = null;
+    for (const r of padroesConfirmacaoFalsa) {
+      if (r.test(replyBaixo)) { padraoConfFalsa = r.toString(); break; }
+    }
+    if (padraoConfFalsa) {
+      console.error(`Bot falseou confirmação para ${userId}. Padrão: ${padraoConfFalsa}. Trecho: "${String(reply).substring(0, 200)}"`);
+      registrarInteracao("bot_inventou", { senderId: userId, motivo: `bot disse variante de 'reserva feita' sem gerar [RESERVA:] (padrão ${padraoConfFalsa})`, extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
       await escalarConversa(userId, "Bot falseou confirmação de reserva sem gerar [RESERVA:]");
       return;
     }
 
-    // guard: bot NUNCA pode dizer "deixa eu verificar/checar disponibilidade" — já foi consultada
+    // guard: bot NUNCA pode dizer "vou verificar disponibilidade" — já foi consultada
+    // (padrões específicos, com contexto de disponibilidade — evita falso positivo em
+    //  frases legítimas como "deixa eu ver se entendi")
     const padroesVerificar = [
-      /\bdeixa\s+eu\s+(verificar|checar|conferir|ver)/i,
-      /\bvou\s+(verificar|checar|conferir|ver)\s+(a\s+)?(disponibilidade|dispon|reserva)/i,
-      /\baguar?da?\s+(um\s+)?(momento|momentinho|minutinho|instante|\s*s[óo])/i,
-      /\bj[áa]\s+te?\s+respond[oe]/i,
+      /\bdeixa\s+eu\s+(verificar|checar|conferir)\s+(a\s+)?(disponibilidade|dispon|reserva|data|dia|hor[áa]rio)/i,
+      /\bvou\s+(verificar|checar|conferir)\s+(a\s+)?(disponibilidade|dispon|reserva|data|dia|hor[áa]rio|se\s+tem)/i,
+      /\bverifico\s+(a\s+)?(disponibilidade|dispon)/i,
       /\bem\s+breve\s+(retorn|respond)/i,
-      /\b(ir|vou|deixa)\s+(ver|verific|checar)\b.*\bdispon/i
+      /\baguarda?\s+(s[óo]|um)\s+(um\s+)?(momento|momentinho|minutinho|instante|segundo)\b/i,
+      /\bj[áa]\s+(te|lhe)\s+respond[oe]\b/i
     ];
-    const falouVerificar = padroesVerificar.some(r => r.test(replyBaixo));
-    if (falouVerificar) {
-      console.error(`Bot falou 'deixa eu verificar' para ${userId} — interceptando`);
-      registrarInteracao("bot_inventou", { senderId: userId, motivo: "bot disse 'deixa eu verificar disponibilidade' (proibido)", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
+    let padraoDisparou = null;
+    for (const r of padroesVerificar) {
+      if (r.test(replyBaixo)) { padraoDisparou = r.toString(); break; }
+    }
+    if (padraoDisparou) {
+      console.error(`Bot falou 'deixa eu verificar' para ${userId} — interceptando. Padrão: ${padraoDisparou}. Trecho: "${String(reply).substring(0, 200)}"`);
+      registrarInteracao("bot_inventou", { senderId: userId, motivo: `bot disse variante de 'deixa eu verificar' (padrão ${padraoDisparou})`, extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
       await escalarConversa(userId, "Bot disse 'deixa eu verificar' em vez de responder direto");
       return;
     }

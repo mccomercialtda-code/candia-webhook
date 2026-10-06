@@ -4164,7 +4164,12 @@ const querAlterarReserva =
     history.some(h => h.role === "assistant" && h.content?.includes("[RESERVA:"));
 
   let disponibilidadeInfo = "";
-  if ((!jaTemReserva || querAlterarReserva) && textoTemContextoReserva) {
+  // basta ter uma data explícita + não ter reserva (ou querer alterar) para checar disponibilidade.
+  // o filtro textoTemContextoReserva era muito restritivo — "chá de casa nova dia 17/10", "pensando sábado"
+  // etc. não disparavam, deixando o bot sem a info padrão de sábado (coberto/descoberto).
+  const deveChecarDisp = (!jaTemReserva || querAlterarReserva) &&
+    (explicitDates.length > 0 || textoTemContextoReserva);
+  if (deveChecarDisp) {
     const hojeStr = dateToBR(getDataBrasilia());
     for (const data of explicitDates) {
       const disp = await verificarDisponibilidade(data);
@@ -4310,15 +4315,18 @@ if (dataPrincipal) {
   }
 }
 
-// Se a data veio de fallback (reserva/msg exata) e não foi consultada no loop acima,
-// verificar disponibilidade e injetar alerta se esgotada
+// Se a data veio de fallback (reserva/msg exata/data_contexto) e não foi consultada no loop acima,
+// verificar disponibilidade e injetar o aviso adequado (esgotado/descoberto/coberto).
 if (dataPrincipal && !explicitDates.includes(dataPrincipal) && !jaTemReserva) {
   try {
     const dispFallback = await verificarDisponibilidade(dataPrincipal);
     console.log(`Disponibilidade fallback para ${dataPrincipal}:`, JSON.stringify(dispFallback));
-    // ambas condições precisam bater: disponivel=false E tipo=esgotado
     if (dispFallback && dispFallback.disponivel === false && dispFallback.tipo === "esgotado") {
       disponibilidadeInfo += `\n⚠️ ATENÇÃO: As reservas para ${dataPrincipal} estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
+    } else if (dispFallback && dispFallback.tipo === "descoberto") {
+      disponibilidadeInfo += `\nData ${dataPrincipal} (${dispFallback.diaSemana}): disponível. Área coberta praticamente esgotada — provavelmente a reserva ficará na área externa (calçada), mas NUNCA garantir isso ao cliente. Usar a mensagem exata do dia (variante descoberta) que já contém a redação correta ("provavelmente sua reserva ficará na área externa..."). ${dispFallback.vagasDescoberto} vagas de descoberto restantes.\n`;
+    } else if (dispFallback && dispFallback.tipo === "coberto") {
+      disponibilidadeInfo += `\nData ${dataPrincipal} (${dispFallback.diaSemana}): disponível (${dispFallback.vagasCoberto} vagas restantes).\n`;
     }
   } catch (err) {
     console.error(`Erro ao verificar disponibilidade fallback para ${dataPrincipal}:`, err);

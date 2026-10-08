@@ -1974,6 +1974,8 @@ PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENEFÍCIO ANIVERSARIANTE
 
   🍺 Reservas confirmadas com grupo a partir de 10 pessoas e chegada dentro do horário ganham 2 litros de chope de cortesia"
 
+* REGRA CRÍTICA — Depois de responder sobre "condição especial" (cortesia de chope) para uma data de SÁBADO, SEXTA ou DOMINGO, NÃO terminar a resposta com "Quer fazer a reserva pra esse dia?" ou qualquer pergunta genérica de interesse. Simplesmente parar após a frase da cortesia. Se o cliente responder confirmando interesse ("vou querer", "quero sim", "pode ser", "fechado" etc), AÍ SIM enviar a mensagem exata do dia (sábado/sexta/domingo) na resposta seguinte. NUNCA pular a mensagem exata e ir direto para pedir nome/telefone — mesmo que o cliente já tenha informado quantas pessoas.
+* REGRA CRÍTICA — Antes de pedir nome completo e telefone para uma reserva de SÁBADO, SEXTA ou DOMINGO, VERIFIQUE no histórico se a mensagem exata do dia (começando com "Será um prazer recebê-los aqui 😊 / Vou te explicar como funciona...") já foi enviada. Se NÃO foi enviada, enviar a mensagem exata PRIMEIRO. Só pedir nome/telefone DEPOIS que o cliente confirmar o formato da mensagem exata. Isso vale mesmo que a conversa tenha começado pelo fluxo de "condição especial", mesmo que o cliente já tenha informado quantas pessoas, e mesmo que o cliente diga "vou querer reservar".
 * Se o cliente pedir para trocar os 2 litros de chope por outra coisa, informar que pode trocar por 1 caipirinha
 * A cortesia de 2 litros de chope pode ser trocada por 1 caipirinha para clientes que não bebem chope
 * Informar essa opção apenas se o cliente mencionar que não bebe chope — nunca oferecer espontaneamente
@@ -4845,7 +4847,8 @@ if (escalation) {
       await redisSet(`msg_exata_data:${userId}`, dataPrincipal, 3600);
     }
   }
-  console.log(`Bot responde para ${userId} (${cleanReply.length} chars): ${cleanReply.substring(0, 500)}${cleanReply.length > 500 ? "..." : ""}`);
+  const replyParaLog = cleanReply.replace(/\n+/g, " | ").substring(0, 800);
+  console.log(`Bot responde para ${userId} (${cleanReply.length} chars): ${replyParaLog}${cleanReply.length > 800 ? "..." : ""}`);
   await sendInstagramMessage(userId, cleanReply);
   await salvarUltimaRespostaBot(userId, cleanReply);
 

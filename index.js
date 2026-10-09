@@ -1698,6 +1698,40 @@ async function salvarHistoricoCompleto(userId, mensagem, role = "user") {
   }
 }
 
+// ─── Mensagem exata do dia (renderizada no código, não no prompt) ──────────
+
+const MSG_EXATA_CONFIG = {
+  "sábado":  { dia: "sábados",  horaMusica: "15hs", horaLimite: "15hs", lugares: 8  },
+  "sexta":   { dia: "sextas",   horaMusica: "19hs", horaLimite: "19hs", lugares: 12 },
+  "domingo": { dia: "domingos", horaMusica: "15hs", horaLimite: "14hs", lugares: 15 }
+};
+
+function renderMsgExata(diaSemana, tipoDisp, ajuste = null) {
+  const cfg = MSG_EXATA_CONFIG[diaSemana];
+  if (!cfg) return null;
+
+  const lugares   = ajuste?.lugares   ?? cfg.lugares;
+  const horaLim   = ajuste?.horario   ?? cfg.horaLimite;
+  const horaMus   = cfg.horaMusica;
+  const diaPlural = cfg.dia;
+
+  const aberturaSexta = diaSemana === "sexta"
+    ? `A música ao vivo começa às ${horaMus} ⏰, horário máximo que conseguimos segurar as mesas reservadas =)`
+    : `Nosso rolê começa cedo, às ${horaMus} já tem música ao vivo! Por isso, no ${diaSemana}, só conseguimos segurar as mesas reservadas até as ${horaLim} ⏰`;
+
+  const base = `Será um prazer recebê-los aqui 😊
+Vou te explicar como funciona ${diaSemana === "sexta" ? "as reservas aqui nas sextas!" : `aos ${diaPlural}:`}
+
+${aberturaSexta}
+Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até ${lugares} lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)`;
+
+  const extraDescoberto = tipoDisp === "descoberto"
+    ? `\n\nAhh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.`
+    : "";
+
+  return `${base}${extraDescoberto}\n\nBora fazer a reserva?`;
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 function getSystemPrompt(disponibilidade, regrasDia = null) {
@@ -2146,101 +2180,17 @@ FLUXO DE RESERVA
 * Se o cliente mencionar uma data que está esgotada, responder com o briefing da data se disponível, ou informar que não há vagas disponíveis
 
 ────────────────
-FLUXO SÁBADO (PRIORITÁRIO — SOBREPÕE QUALQUER OUTRO FLUXO)
+FLUXO SÁBADO / SEXTA / DOMINGO (PRIORITÁRIO — SOBREPÕE QUALQUER OUTRO FLUXO)
 ────────────────
 
-* Quando o cliente quiser reserva para um SÁBADO e houver disponibilidade, usar OBRIGATORIAMENTE uma dessas mensagens exatas — nunca parafrasear, nunca resumir, nunca trocar palavras, nunca anteceder com perguntas:
-
-SE disponibilidade COBERTA (tipo: 'coberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona aos sábados:
-
-Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no sábado, só conseguimos segurar as mesas reservadas até as 15hs ⏰
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 8 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Bora fazer a reserva?"
-
-SE disponibilidade apenas DESCOBERTA (tipo: 'descoberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona aos sábados:
-
-Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no sábado, só conseguimos segurar as mesas reservadas até as 15hs ⏰
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 8 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
-
-Bora fazer a reserva?"
-
-* NUNCA perguntar quantas pessoas antes de enviar essa mensagem — enviar assim que confirmar disponibilidade para sábado
-* Se o cliente já informar o número de pessoas junto com a data ("queremos reservar dia 20/06 para 10 pessoas"), enviar a mensagem exata mesmo assim — ignorar temporariamente o número de pessoas. Após o cliente confirmar com "sim/bora/etc", pedir apenas o que ainda falta (nome completo e telefone), sem perguntar novamente quantas pessoas vêm
-* Após enviar a mensagem exata de sábado e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", "vamos" etc), ir DIRETO para pedir nome completo, telefone e previsão de convidados — sem repetir condições, sem confirmar novamente, sem consultar disponibilidade outra vez
-* O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata de sábado e o cliente confirmou, o fluxo está na etapa de coleta de dados
-
-────────────────
-FLUXO SEXTA (PRIORITÁRIO — SOBREPÕE QUALQUER OUTRO FLUXO)
-────────────────
-
-* Quando o cliente quiser reserva para uma SEXTA e houver disponibilidade, usar OBRIGATORIAMENTE uma dessas mensagens exatas — nunca parafrasear, nunca resumir, nunca trocar palavras, nunca anteceder com perguntas:
-
-SE disponibilidade COBERTA (tipo: 'coberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona as reservas aqui nas sextas!
-
-A música ao vivo começa às 19hs ⏰, horário máximo que conseguimos segurar as mesas reservadas =)
-
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 12 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Bora fazer a reserva?"
-
-SE disponibilidade apenas DESCOBERTA (tipo: 'descoberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona as reservas aqui nas sextas!
-
-A música ao vivo começa às 19hs ⏰, horário máximo que conseguimos segurar as mesas reservadas =)
-
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 12 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
-
-Bora fazer a reserva?"
-
-* NUNCA perguntar quantas pessoas antes de enviar essa mensagem — enviar assim que confirmar disponibilidade para sexta
-* Se o cliente já informar o número de pessoas junto com a data ("queremos reservar sexta 19/06 para 10 pessoas"), enviar a mensagem exata mesmo assim — ignorar temporariamente o número de pessoas. Após o cliente confirmar com "sim/bora/etc", pedir apenas o que ainda falta (nome completo e telefone), sem perguntar novamente quantas pessoas vêm
-* Após enviar a mensagem exata de sexta e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", "vamos" etc), ir DIRETO para pedir nome completo, telefone e previsão de convidados — sem repetir condições, sem confirmar novamente, sem consultar disponibilidade outra vez
-* O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata de sexta e o cliente confirmou, o fluxo está na etapa de coleta de dados
-
-────────────────
-FLUXO DOMINGO (PRIORITÁRIO — SOBREPÕE QUALQUER OUTRO FLUXO)
-────────────────
-
-* Quando o cliente quiser reserva para um DOMINGO e houver disponibilidade, usar OBRIGATORIAMENTE uma dessas mensagens exatas — nunca parafrasear, nunca resumir, nunca trocar palavras, nunca anteceder com perguntas:
-
-SE disponibilidade COBERTA (tipo: 'coberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona aos domingos:
-
-Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no domingo, só conseguimos segurar as mesas reservadas até as 14hs ⏰
-
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 15 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Bora fazer a reserva?"
-
-SE disponibilidade apenas DESCOBERTA (tipo: 'descoberto'):
-"Será um prazer recebê-los aqui 😊
-Vou te explicar como funciona aos domingos:
-
-Nosso rolê começa cedo, às 15hs já tem música ao vivo! Por isso, no domingo, só conseguimos segurar as mesas reservadas até as 14hs ⏰
-
-Como aqui é uma casa de samba e naturalmente a galera fica mais em pé, não temos tantas mesas e cadeiras.. dessa forma, reservamos até 15 lugares sentados (mas pode chamar todo mundo que aqui é igual coração de mãe e cabe geral sambando 🧡)
-
-Ahh, e só mais um detalhe: como estamos com muitas reservas para este dia, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.
-
-Bora fazer a reserva?"
-
-* NUNCA perguntar quantas pessoas antes de enviar essa mensagem — enviar assim que confirmar disponibilidade para domingo
-* Se o cliente já informar o número de pessoas junto com a data ("queremos reservar domingo 21/06 para 10 pessoas"), enviar a mensagem exata mesmo assim — ignorar temporariamente o número de pessoas. Após o cliente confirmar com "sim/bora/etc", pedir apenas o que ainda falta (nome completo e telefone), sem perguntar novamente quantas pessoas vêm
-* Após enviar a mensagem exata de domingo e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", "vamos" etc), ir DIRETO para pedir nome completo, telefone e previsão de convidados — sem repetir condições, sem confirmar novamente, sem consultar disponibilidade outra vez
-* O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata de domingo e o cliente confirmou, o fluxo está na etapa de coleta de dados
+* Quando o cliente quiser reserva para SÁBADO, SEXTA ou DOMINGO e houver disponibilidade, enviar OBRIGATORIAMENTE a MENSAGEM EXATA DO DIA renderizada pelo sistema (ela chega no contexto dentro do bloco <<<MSG_EXATA ... MSG_EXATA>>>). Copiar o texto entre as marcas palavra por palavra — não parafrasear, não resumir, não trocar palavras, não anteceder com perguntas.
+* Se o contexto NÃO contém o bloco <<<MSG_EXATA ... MSG_EXATA>>> para este dia (ex: data no passado, esgotado), NÃO tentar reconstruir a mensagem de memória — seguir a lógica apropriada (data passada, esgotada etc).
+* EXCEÇÃO — PROGRAMAÇÃO ESPECIAL: se o contexto contém MENSAGEM EXATA DA PROGRAMAÇÃO + INSTRUÇÕES ESPECIAIS DO DIA, usar ESTAS no lugar da MENSAGEM EXATA DO DIA padrão. Aplicar as INSTRUÇÕES ESPECIAIS (lugares, horário, área) em vez dos padrões do dia da semana.
+* NUNCA perguntar quantas pessoas antes de enviar a mensagem exata — enviar assim que confirmar disponibilidade.
+* Se o cliente já informar o número de pessoas junto com a data ("queremos reservar dia 20/06 para 10 pessoas"), enviar a mensagem exata mesmo assim — ignorar temporariamente o número de pessoas. Após o cliente confirmar, pedir apenas o que ainda falta (nome completo e telefone), sem perguntar novamente quantas pessoas vêm.
+* Se o cliente pedir número de pessoas N menor ou igual ao limite do dia, substituir APENAS a linha "reservamos até X lugares sentados" por "reservamos N lugares sentados pra vocês" dentro do bloco MSG_EXATA, mantendo o resto do texto idêntico. Se N for maior que o limite, manter o texto original.
+* Após enviar a mensagem exata e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", "vamos" etc), ir DIRETO para pedir nome completo, telefone e previsão de convidados — sem repetir condições, sem confirmar novamente, sem consultar disponibilidade outra vez.
+* O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata e o cliente confirmou, o fluxo está na etapa de coleta de dados.
 
 ────────────────
 FLUXO GENÉRICO (PARA TER/QUA/QUI — NÃO USAR EM SEXTA, SÁBADO OU DOMINGO)
@@ -4365,6 +4315,24 @@ let systemPrompt = getSystemPrompt(
   regrasDiaConsulta
 );
 
+// Renderiza a mensagem exata do dia (sáb/sex/dom) no código e injeta como bloco pronto.
+// Evita o Claude parafrasear/errar o template. Programação especial sobrepõe (ver abaixo).
+if (dataPrincipal && !jaTemReserva) {
+  try {
+    const dispPraMsg = await verificarDisponibilidade(dataPrincipal);
+    const diaMsg = dispPraMsg?.diaSemana;
+    if (MSG_EXATA_CONFIG[diaMsg]) {
+      const tipoMsg = dispPraMsg.tipo === "descoberto" ? "descoberto" : "coberto";
+      const msgRenderizada = renderMsgExata(diaMsg, tipoMsg, ajusteDia);
+      if (msgRenderizada) {
+        systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]MENSAGEM EXATA DO DIA (${dataPrincipal} — ${diaMsg} — ${tipoMsg}) — se o fluxo pedir para enviar a mensagem exata do dia, use EXATAMENTE o texto abaixo entre as marcas, palavra por palavra, sem acrescentar ou remover nada:\n<<<MSG_EXATA\n${msgRenderizada}\nMSG_EXATA>>>\n[/SISTEMA]\n`;
+      }
+    }
+  } catch (err) {
+    console.error(`Erro ao renderizar msg exata para ${dataPrincipal}:`, err);
+  }
+}
+
 // escalação automática se briefing contém "escalar" — silenciosa, sem chamar Claude e sem enviar mensagem ao cliente
 if (regrasDiaConsulta?.briefing && regrasDiaConsulta.briefing.toLowerCase().includes("escalar")) {
   const usernameEsc = await redisGet(`ig_username:${userId}`);
@@ -4405,7 +4373,7 @@ if (regrasDiaConsulta?.briefing || programacaoConsulta || ajusteDia || (programa
       if (programacaoConsulta.instrucoes) {
         systemPrompt += `INSTRUÇÕES ESPECIAIS DO DIA: ${programacaoConsulta.instrucoes}\n`;
       }
-      systemPrompt += `PRIORIDADE: a MENSAGEM EXATA DA PROGRAMAÇÃO sobrepõe qualquer briefing apenas para perguntas sobre programação/evento/show/atração. As regras fixas de reserva por dia da semana (mensagem exata de sábado/sexta/domingo, limites de lugares, horários de reserva) continuam valendo normalmente.\n`;
+      systemPrompt += `PRIORIDADE ABSOLUTA: este é um DIA ESPECIAL. A MENSAGEM EXATA DA PROGRAMAÇÃO acima SUBSTITUI integralmente a mensagem exata padrão do dia da semana (sábado/sexta/domingo) para QUALQUER pergunta sobre reserva, evento ou programação. As INSTRUÇÕES ESPECIAIS DO DIA sobrepõem os limites padrão de lugares, horário-limite e área coberta/descoberta — use os valores das instruções especiais em vez dos padrões do dia da semana. Quando o cliente pedir reserva, enviar a MENSAGEM EXATA DA PROGRAMAÇÃO primeiro, aplicando as INSTRUÇÕES ESPECIAIS DO DIA (lugares, horário) e perguntando se quer prosseguir. Ignorar completamente a MENSAGEM EXATA DO DIA renderizada (sáb/sex/dom padrão) nesse dia.\n`;
     }
   }
   for (const extra of programacoesExtras) {

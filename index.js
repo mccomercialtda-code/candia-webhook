@@ -4233,7 +4233,7 @@ if (dataPrincipal) {
   await redisSet(`data_contexto:${userId}`, dataPrincipal, 3600);
 }
 
-const dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
+let dataISOConsulta = dataPrincipal ? convertDateToISO(dataPrincipal) : null;
 
 // detecta se dataPrincipal está no passado (cliente provavelmente errou ano/mês)
 let dataPrincipalNoPassado = false;
@@ -4258,6 +4258,20 @@ if (dataPrincipal) {
   programacaoConsulta = await buscarProgramacaoPorData(dataISOConsulta);
   console.log(`Programação conteúdo:`, programacaoConsulta);
   console.log(`Programação para ${dataISOConsulta}: ${programacaoConsulta ? `encontrada${programacaoConsulta.especial ? " (especial)" : ""}` : "não encontrada"}`);
+
+  // Persiste programação especial no Redis para sobreviver a rodadas onde dataPrincipal fica null.
+  // TTL curto o suficiente para não vazar entre eventos diferentes, longo o suficiente para
+  // cobrir o resto da conversa (1 semana).
+  if (programacaoConsulta && programacaoConsulta.especial) {
+    try {
+      await redisSet(`programacao_especial:${userId}`, JSON.stringify({
+        dataBR: dataPrincipal,
+        mensagemExata: programacaoConsulta.mensagemExata || null,
+        instrucoes: programacaoConsulta.instrucoes || null,
+        linhas: programacaoConsulta.linhas || null
+      }), 60 * 60 * 24 * 7);
+    } catch {}
+  }
 
   // busca programação das demais datas explícitas (evitando duplicar dataPrincipal)
   const datasParaConsultar = (explicitDates || []).filter(d => d !== dataPrincipal);
@@ -4292,6 +4306,34 @@ if (dataPrincipal && !explicitDates.includes(dataPrincipal) && !jaTemReserva) {
     }
   } catch (err) {
     console.error(`Erro ao verificar disponibilidade fallback para ${dataPrincipal}:`, err);
+  }
+}
+
+// Fallback: se nenhuma programação foi consultada nesta rodada mas há programação
+// especial persistida para este userId (de rodadas anteriores), re-usar para manter
+// as INSTRUÇÕES ESPECIAIS DO DIA vigentes durante toda a conversa sobre esse evento.
+if (!programacaoConsulta) {
+  try {
+    const progPersistRaw = await redisGet(`programacao_especial:${userId}`);
+    if (progPersistRaw) {
+      const progPersist = JSON.parse(progPersistRaw);
+      if (progPersist && (progPersist.mensagemExata || progPersist.instrucoes)) {
+        programacaoConsulta = {
+          linhas: progPersist.linhas || "",
+          especial: true,
+          mensagemExata: progPersist.mensagemExata || null,
+          instrucoes: progPersist.instrucoes || null
+        };
+        if (!dataPrincipal && progPersist.dataBR) {
+          dataPrincipal = progPersist.dataBR;
+          dataISOConsulta = convertDateToISO(progPersist.dataBR);
+          console.log(`Sem data na msg — usando dataBR da programação especial persistida (${progPersist.dataBR}) para ${userId}`);
+        }
+        console.log(`Programação especial persistida reinjetada para ${userId} (${progPersist.dataBR})`);
+      }
+    }
+  } catch (err) {
+    console.error(`Erro ao ler programação especial persistida para ${userId}:`, err);
   }
 }
 

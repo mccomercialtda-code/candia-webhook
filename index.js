@@ -2035,6 +2035,14 @@ FEIJOADA
 * Só mencionar feijoada (tradicional ou vegana) se o cliente perguntar
 * Nunca oferecer espontaneamente
 
+OPEN BAR DE QUARTA (PROMOÇÃO)
+
+* Às QUARTAS-FEIRAS temos promoção de open bar: chope pilsen à vontade das 19h às 22h por R$49,90 por pessoa
+* Só mencionar se o cliente perguntar sobre open bar, chope à vontade, promoção de quarta, ou similar
+* Nunca oferecer espontaneamente
+* NÃO confundir com o fluxo de EVENTO PRIVADO (open bar + food) — esta é uma promoção regular de quarta, não é fechamento do bar
+* Resposta padrão quando perguntarem sobre o open bar: "Nas quartas-feiras rola nossa promoção de open bar de chope pilsen 🍺 Das 19h às 22h, à vontade por R$49,90 por pessoa 😊"
+
 ALMOÇO EXECUTIVO (SEXTA)
 
 * Às sextas-feiras temos almoço executivo: entrada + prato principal + sobremesa por R$49,90

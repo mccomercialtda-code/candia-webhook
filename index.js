@@ -2041,7 +2041,8 @@ OPEN BAR DE QUARTA (PROMOÇÃO)
 * Só mencionar se o cliente perguntar sobre open bar, chope à vontade, promoção de quarta, ou similar
 * Nunca oferecer espontaneamente
 * NÃO confundir com o fluxo de EVENTO PRIVADO (open bar + food) — esta é uma promoção regular de quarta, não é fechamento do bar
-* Resposta padrão quando perguntarem sobre o open bar: "Nas quartas-feiras rola nossa promoção de open bar de chope pilsen 🍺 Das 19h às 22h, à vontade por R$49,90 por pessoa 😊"
+* IMPORTANTE — NÃO É ESQUEMA DE FICHAS: nas quartas-feiras o atendimento é em MESA. O garçom leva cada chope até a mesa quando o cliente pedir. NUNCA dizer que o open bar funciona com fichas, autoatendimento ou "se servir à vontade" — isso é característica apenas das sextas/sábados, não das quartas.
+* Resposta padrão quando perguntarem sobre o open bar: "Nas quartas-feiras rola nossa promoção de open bar de chope pilsen 🍺 Das 19h às 22h, à vontade por R$49,90 por pessoa. O atendimento é em mesa — o garçom leva cada chope até você quando pedir 😊"
 
 ALMOÇO EXECUTIVO (SEXTA)
 

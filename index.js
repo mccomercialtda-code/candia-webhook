@@ -1927,7 +1927,7 @@ COUVERT / ENTRADA (mesma coisa)
 
 * Terça, quarta e quinta: SEM couvert (não há cobrança de entrada)
 * Sexta: R$12
-* Sábado: R$10
+* Sábado: R$12
 * Domingo: R$12
 * Sempre verificar o dia da data mencionada antes de informar o valor — se for terça/quarta/quinta, informar que NÃO há couvert nesses dias
 * Se cliente perguntar sobre entrada em terça/quarta/quinta, confirmar que não há cobrança

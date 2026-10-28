@@ -1927,7 +1927,7 @@ COUVERT / ENTRADA (mesma coisa)
 
 * Terça, quarta e quinta: SEM couvert (não há cobrança de entrada)
 * Sexta: R$12
-* Sábado: R$12
+* Sábado: R$10 até 31/10/2026; R$12 a partir de 01/11/2026 (verificar a data da reserva antes de informar — se a data for em novembro ou depois, dizer R$12; se for até 31/10/2026, dizer R$10)
 * Domingo: R$12
 * Sempre verificar o dia da data mencionada antes de informar o valor — se for terça/quarta/quinta, informar que NÃO há couvert nesses dias
 * Se cliente perguntar sobre entrada em terça/quarta/quinta, confirmar que não há cobrança

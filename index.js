@@ -3169,7 +3169,8 @@ if (cmd.startsWith("/ajustar ")) {
       await clearOverride(dataISO);
       await redisDel(`regra_dia:${dataISO}`);
       await redisDel(`ajuste:${dataISO}`);
-      await notifyOwner(`✅ Override, briefing e ajuste removidos para ${formatDateBR(dataISO)}.`);
+      await redisDel(`escalar_data:${dataISO}`);
+      await notifyOwner(`✅ Override, briefing, ajuste e marcador de escalada removidos para ${formatDateBR(dataISO)}.`);
       return;
     }
 

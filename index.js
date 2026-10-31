@@ -78,7 +78,12 @@ function getDiaSemana(dataStr) {
 }
 
 function convertDateToISO(dateStr) {
-  const [dia, mes, ano] = dateStr.split("/");
+  if (!dateStr || typeof dateStr !== "string") return null;
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return null;
+  const [dia, mes, ano] = parts;
+  if (!dia || !mes || !ano) return null;
+  if (!/^\d+$/.test(dia) || !/^\d+$/.test(mes) || !/^\d+$/.test(ano)) return null;
   return `${ano}-${mes.padStart(2,"0")}-${dia.padStart(2,"0")}`;
 }
 
@@ -426,6 +431,10 @@ async function proximoNumeroDoDia(dataISO) {
 async function verificarDisponibilidade(dataStr) {
   const diaSemana = getDiaSemana(dataStr);
   const dataISO = convertDateToISO(dataStr);
+  if (!dataISO) {
+    console.warn(`verificarDisponibilidade: data inválida "${dataStr}" — devolvendo sem_data`);
+    return { disponivel: false, tipo: "sem_data", diaSemana: null };
+  }
 
   // Override manual tem prioridade sobre o Notion
   const override = await getOverride(dataISO);
@@ -2280,6 +2289,7 @@ Quando confirmar uma reserva, incluir SEMPRE ao final da resposta:
 * "local" = Fundos, Corredor ou Frente (só preencher se o cliente mencionar preferência)
 * Nunca usar outros campos como "pessoas=", "beneficio=", "grupo="
 * Se faltar campo obrigatório, peça o dado — não gere o bloco incompleto
+* REGRA ABSOLUTA — DATA DEVE SER DD/MM/AAAA concreta. NUNCA emitir "data=a confirmar", "data=TBD", "data=?", "data=amanhã", "data=sábado" ou qualquer texto que não seja no formato numérico DD/MM/AAAA. Se o cliente ainda não informou a data concreta, PERGUNTAR a data e NÃO gerar o bloco [RESERVA:]. O mesmo vale para "dia" (deve ser o nome do dia da semana por extenso: segunda, terça, quarta, quinta, sexta, sábado ou domingo — nunca "a confirmar").
 
 LOCAIS DE RESERVA
 
@@ -3307,6 +3317,11 @@ Responda APENAS o JSON válido, sem markdown.`,
         total_esperado: "número total de pessoas",
         contato: "telefone de contato"
       };
+      // trata data no formato DD/MM/AAAA como obrigatória de verdade — "a confirmar", "TBD", etc. contam como ausente
+      if (dados.data && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(dados.data).trim())) {
+        console.warn(`Bot emitiu data inválida "${dados.data}" no bloco [RESERVA:] — tratando como ausente`);
+        dados.data = null;
+      }
       const faltam = camposObrigatorios.filter(c => !dados[c] || String(dados[c]).trim() === "" || dados[c] === 0);
 
       function montarResumo() {

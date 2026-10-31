@@ -5078,15 +5078,22 @@ app.post("/", async (req, res) => {
     if (messageId) {
       // lock atômico NX: só processa se conseguir setar (evita race condition)
       const lockUrl = `${UPSTASH_URL}/set/${encodeURIComponent("msg_processed:" + messageId)}/1?NX&EX=86400`;
-      const lockRes = await fetch(lockUrl, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
-      });
-      const lockData = await lockRes.json();
+      let lockData;
+      try {
+        const lockRes = await fetch(lockUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+        });
+        lockData = await lockRes.json();
+      } catch (err) {
+        console.error(`Erro ao fazer SET NX para msg_processed:${messageId}:`, err);
+        lockData = { error: err.message };
+      }
       if (lockData.result !== "OK") {
-        console.log(`Mensagem duplicada ignorada (NX): ${messageId}`);
+        console.log(`Mensagem duplicada/falha-NX ignorada (resposta=${JSON.stringify(lockData)}): sender=${senderId} mid=${messageId}`);
         return;
       }
+      console.log(`Lock NX ok para sender=${senderId} mid=${messageId} — prosseguindo processamento`);
     }
 
     let message = messaging?.message?.text || "";

@@ -133,20 +133,70 @@ function sleep(ms) {
 
 // ─── Redis ────────────────────────────────────────────────────────────────────
 
+// ─── Cache em memória para reduzir requests ao Upstash ─────────────────────
+// Guarda valores de redisGet por 60s. redisSet/redisDel invalidam a chave.
+// Prefixos com cache liberado (chaves estáveis que mudam pouco e são lidas várias
+// vezes por msg): ig_username, reserva_confirmada, paused, conversa_escalada,
+// data_contexto, aguardando_contato, contato_detectado, msg_exata_data,
+// programacao_especial, ultima_intervencao, regra_dia, ajuste.
+const REDIS_CACHE_TTL_MS = 60 * 1000;
+const _redisCache = new Map();
+const _CACHEABLE_PREFIXES = [
+  "ig_username:",
+  "reserva_confirmada:",
+  "paused:",
+  "conversa_escalada:",
+  "data_contexto:",
+  "aguardando_contato:",
+  "contato_detectado:",
+  "msg_exata_data:",
+  "programacao_especial:",
+  "ultima_intervencao:",
+  "regra_dia:",
+  "ajuste:",
+  "override_abertura:"
+];
+function _isCacheable(key) {
+  return _CACHEABLE_PREFIXES.some(p => key.startsWith(p));
+}
+function _cacheGet(key) {
+  const entry = _redisCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.exp) { _redisCache.delete(key); return undefined; }
+  return entry.value;
+}
+function _cachePut(key, value) {
+  _redisCache.set(key, { value, exp: Date.now() + REDIS_CACHE_TTL_MS });
+  // bound simples pra não crescer indefinidamente
+  if (_redisCache.size > 2000) {
+    const firstKey = _redisCache.keys().next().value;
+    _redisCache.delete(firstKey);
+  }
+}
+function _cacheInvalidate(key) {
+  _redisCache.delete(key);
+}
+
 async function redisGet(key) {
+  if (_isCacheable(key)) {
+    const cached = _cacheGet(key);
+    if (cached !== undefined) return cached;
+  }
   try {
     const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
       headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
     });
     const data = await res.json();
-    if (data.result == null) return null;
-    return data.result;
+    const result = (data.result == null) ? null : data.result;
+    if (_isCacheable(key)) _cachePut(key, result);
+    return result;
   } catch {
     return null;
   }
 }
 
 async function redisSet(key, value, ex = 300) {
+  if (_isCacheable(key)) _cacheInvalidate(key);
   try {
     const serialized = typeof value === "string" ? value : JSON.stringify(value);
     const url = ex
@@ -162,6 +212,7 @@ async function redisSet(key, value, ex = 300) {
 }
 
 async function redisDel(key) {
+  if (_isCacheable(key)) _cacheInvalidate(key);
   try {
     await fetch(`${UPSTASH_URL}/del/${key}`, {
       method: "POST",
@@ -170,6 +221,41 @@ async function redisDel(key) {
   } catch (err) {
     console.error(`Erro redis del ${key}:`, err);
   }
+}
+
+// Batch GET — 1 request HTTP em vez de N. Devolve array alinhado com `keys`.
+// Mantém o cache em sincronia (preenche entradas cacheáveis que vierem do servidor).
+async function redisMget(keys) {
+  if (!keys || keys.length === 0) return [];
+  const results = new Array(keys.length).fill(null);
+  const missIdx = [];
+  const missKeys = [];
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    if (_isCacheable(k)) {
+      const cached = _cacheGet(k);
+      if (cached !== undefined) { results[i] = cached; continue; }
+    }
+    missIdx.push(i);
+    missKeys.push(k);
+  }
+  if (missKeys.length === 0) return results;
+  try {
+    const url = `${UPSTASH_URL}/mget/${missKeys.map(k => encodeURIComponent(k)).join("/")}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+    });
+    const data = await res.json();
+    const arr = Array.isArray(data.result) ? data.result : missKeys.map(() => null);
+    for (let j = 0; j < missIdx.length; j++) {
+      const val = arr[j] == null ? null : arr[j];
+      results[missIdx[j]] = val;
+      if (_isCacheable(missKeys[j])) _cachePut(missKeys[j], val);
+    }
+  } catch (err) {
+    console.error("Erro redis mget:", err);
+  }
+  return results;
 }
 
 async function redisLPush(key, value) {
@@ -5095,6 +5181,17 @@ app.post("/", async (req, res) => {
       }
       console.log(`Lock NX ok para sender=${senderId} mid=${messageId} — prosseguindo processamento`);
     }
+
+    // Pré-busca em batch de todas as chaves cacheáveis que vamos ler nos próximos
+    // passos. 1 request HTTP em vez de ~6. As chamadas redisGet seguintes pegam do cache.
+    await redisMget([
+      `ig_username:${senderId}`,
+      `reserva_confirmada:${senderId}`,
+      `aguardando_contato:${senderId}`,
+      `contato_detectado:${senderId}`,
+      `ultima_intervencao:${senderId}`,
+      `data_contexto:${senderId}`
+    ]);
 
     let message = messaging?.message?.text || "";
 

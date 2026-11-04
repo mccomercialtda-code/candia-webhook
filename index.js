@@ -4753,33 +4753,16 @@ Regras OBRIGATÓRIAS:
   }
 
   if (dispFinal.tipo === "descoberto") {
+    // Confia no Claude: se ele emitiu [RESERVA:], é porque já enviou a msg exata
+    // descoberta antes (prompt obriga) e o cliente confirmou. Não re-perguntar.
+    // Apenas anotar na observação para registro interno.
     const obs = (reservation.observacao || "").toLowerCase();
-
-    const aceitouExterna =
-      obs.includes("externa") ||
-      obs.includes("descoberta") ||
-      obs.includes("aceitou área externa") ||
-      obs.includes("aceitou area externa");
-
-    if (!aceitouExterna) {
-      const msgExterna =
-        "Temos disponibilidade para esse dia! Como estamos com muitas reservas, provavelmente sua reserva ficará na área externa (na calçada) do bar, que é descoberta.\n" +
-        "Bora fazer a reserva?";
-
-      
-      await redisSet(`echo_bot:${userId}`, "1", 180);
-      await sendInstagramMessage(userId, msgExterna);
-      await salvarUltimaRespostaBot(userId, msgExterna);
-
-      await clearPendingMessages(userId);
-      await cancelarFollowUp(userId);
-
-      return;
+    const jaMencionaExterna = obs.includes("externa") || obs.includes("descoberta");
+    if (!jaMencionaExterna) {
+      reservation.observacao = reservation.observacao
+        ? `${reservation.observacao} | Área externa (descoberta)`
+        : "Área externa (descoberta)";
     }
-
-    reservation.observacao = reservation.observacao
-      ? `${reservation.observacao} | Área externa (descoberta)`
-      : "Área externa (descoberta)";
   }
 
   // verifica disponibilidade do local solicitado (Fundos/Corredor/Frente)

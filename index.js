@@ -2279,12 +2279,12 @@ FLUXO DE RESERVA
 FLUXO SÁBADO / SEXTA / DOMINGO (PRIORITÁRIO — SOBREPÕE QUALQUER OUTRO FLUXO)
 ────────────────
 
-* Quando o cliente quiser reserva para SÁBADO, SEXTA ou DOMINGO e houver disponibilidade, enviar OBRIGATORIAMENTE a MENSAGEM EXATA DO DIA renderizada pelo sistema (ela chega no contexto dentro do bloco <<<MSG_EXATA ... MSG_EXATA>>>). Copiar o texto entre as marcas palavra por palavra — não parafrasear, não resumir, não trocar palavras, não anteceder com perguntas.
-* Se o contexto NÃO contém o bloco <<<MSG_EXATA ... MSG_EXATA>>> para este dia (ex: data no passado, esgotado), NÃO tentar reconstruir a mensagem de memória — seguir a lógica apropriada (data passada, esgotada etc).
+* Quando o cliente quiser reserva para SÁBADO, SEXTA ou DOMINGO e houver disponibilidade, enviar OBRIGATORIAMENTE a MENSAGEM EXATA DO DIA renderizada pelo sistema (ela chega no contexto dentro do bloco delimitado por ===INICIO=== e ===FIM===). Copiar APENAS o texto entre os delimitadores palavra por palavra — não parafrasear, não resumir, não trocar palavras, não anteceder com perguntas. NUNCA incluir as próprias linhas "===INICIO===" ou "===FIM===" na resposta — são apenas delimitadores internos.
+* Se o contexto NÃO contém o bloco ===INICIO===/===FIM=== para este dia (ex: data no passado, esgotado), NÃO tentar reconstruir a mensagem de memória — seguir a lógica apropriada (data passada, esgotada etc). Em particular, NUNCA inventar marcadores tipo "MSG_EXATA" ou "===INICIO===" na resposta ao cliente.
 * EXCEÇÃO — PROGRAMAÇÃO ESPECIAL: se o contexto contém MENSAGEM EXATA DA PROGRAMAÇÃO + INSTRUÇÕES ESPECIAIS DO DIA, usar ESTAS no lugar da MENSAGEM EXATA DO DIA padrão. Aplicar as INSTRUÇÕES ESPECIAIS (lugares, horário, área) em vez dos padrões do dia da semana.
 * NUNCA perguntar quantas pessoas antes de enviar a mensagem exata — enviar assim que confirmar disponibilidade.
 * Se o cliente já informar o número de pessoas junto com a data ("queremos reservar dia 20/06 para 10 pessoas"), enviar a mensagem exata mesmo assim — ignorar temporariamente o número de pessoas. Após o cliente confirmar, pedir apenas o que ainda falta (nome completo e telefone), sem perguntar novamente quantas pessoas vêm.
-* Se o cliente pedir número de pessoas N menor ou igual ao limite do dia, substituir APENAS a linha "reservamos até X lugares sentados" por "reservamos N lugares sentados pra vocês" dentro do bloco MSG_EXATA, mantendo o resto do texto idêntico. Se N for maior que o limite, manter o texto original.
+* Se o cliente pedir número de pessoas N menor ou igual ao limite do dia, substituir APENAS a linha "reservamos até X lugares sentados" por "reservamos N lugares sentados pra vocês" dentro do texto, mantendo o resto do texto idêntico. Se N for maior que o limite, manter o texto original.
 * Após enviar a mensagem exata e o cliente confirmar com qualquer expressão positiva ("sim", "bora", "quero", "pode ser", "pode", "fechado", "ok", "vamos" etc), ir DIRETO para pedir nome completo, telefone e previsão de convidados — sem repetir condições, sem confirmar novamente, sem consultar disponibilidade outra vez.
 * O contexto da conversa deve ser verificado antes de qualquer nova consulta — se já foi enviada a mensagem exata e o cliente confirmou, o fluxo está na etapa de coleta de dados.
 
@@ -4470,7 +4470,7 @@ if (dataPrincipal && !jaTemReserva) {
       const tipoMsg = dispPraMsg.tipo === "descoberto" ? "descoberto" : "coberto";
       const msgRenderizada = renderMsgExata(diaMsg, tipoMsg, ajusteDia);
       if (msgRenderizada) {
-        systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]MENSAGEM EXATA DO DIA (${dataPrincipal} — ${diaMsg} — ${tipoMsg}) — se o fluxo pedir para enviar a mensagem exata do dia, use EXATAMENTE o texto abaixo entre as marcas, palavra por palavra, sem acrescentar ou remover nada:\n<<<MSG_EXATA\n${msgRenderizada}\nMSG_EXATA>>>\n[/SISTEMA]\n`;
+        systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]MENSAGEM EXATA DO DIA (${dataPrincipal} — ${diaMsg} — ${tipoMsg}) — se o fluxo pedir para enviar a mensagem exata do dia, use APENAS o texto entre as linhas ===INICIO=== e ===FIM===, palavra por palavra, sem acrescentar ou remover nada. REGRA CRÍTICA: jamais incluir as próprias linhas "===INICIO===" ou "===FIM===" na resposta ao cliente — elas são apenas delimitadores internos.\n===INICIO===\n${msgRenderizada}\n===FIM===\n[/SISTEMA]\n`;
       }
     }
   } catch (err) {
@@ -4927,6 +4927,14 @@ if (escalation) {
 
   const cleanReply = reply
     .replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "")
+    // remove marcadores internos que delimitam a mensagem exata no system prompt
+    // (o Claude não deve copiá-los, mas se escorregar, strip aqui garante)
+    .replace(/<<<\s*MSG_EXATA\s*/g, "")
+    .replace(/\s*MSG_EXATA\s*>>>/g, "")
+    .replace(/={3,}\s*INICIO\s*={3,}/g, "")
+    .replace(/={3,}\s*FIM\s*={3,}/g, "")
+    .replace(/\[SISTEMA[^\]]*\]/g, "")
+    .replace(/\[\/SISTEMA\]/g, "")
     .trim();
 
   if (await shouldSkipDuplicateReply(userId, cleanReply)) {

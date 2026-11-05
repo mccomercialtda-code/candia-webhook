@@ -4470,16 +4470,21 @@ let systemPrompt = getSystemPrompt(
 
 // Renderiza a mensagem exata do dia (sáb/sex/dom) no código e injeta como bloco pronto.
 // Evita o Claude parafrasear/errar o template. Programação especial sobrepõe (ver abaixo).
+// IMPORTANTE: NÃO injetar se a data estiver ESGOTADA — o Claude precisa ver só o aviso
+// de esgotado em disponibilidadeInfo e NÃO oferecer reserva.
 if (dataPrincipal && !jaTemReserva) {
   try {
     const dispPraMsg = await verificarDisponibilidade(dataPrincipal);
     const diaMsg = dispPraMsg?.diaSemana;
-    if (MSG_EXATA_CONFIG[diaMsg]) {
+    const esgotado = dispPraMsg?.disponivel === false && dispPraMsg?.tipo === "esgotado";
+    if (MSG_EXATA_CONFIG[diaMsg] && !esgotado) {
       const tipoMsg = dispPraMsg.tipo === "descoberto" ? "descoberto" : "coberto";
       const msgRenderizada = renderMsgExata(diaMsg, tipoMsg, ajusteDia);
       if (msgRenderizada) {
         systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]MENSAGEM EXATA DO DIA (${dataPrincipal} — ${diaMsg} — ${tipoMsg}) — se o fluxo pedir para enviar a mensagem exata do dia, use APENAS o texto entre as linhas ===INICIO=== e ===FIM===, palavra por palavra, sem acrescentar ou remover nada. REGRA CRÍTICA: jamais incluir as próprias linhas "===INICIO===" ou "===FIM===" na resposta ao cliente — elas são apenas delimitadores internos.\n===INICIO===\n${msgRenderizada}\n===FIM===\n[/SISTEMA]\n`;
       }
+    } else if (esgotado) {
+      console.log(`MSG_EXATA NÃO injetada para ${dataPrincipal} — data esgotada`);
     }
   } catch (err) {
     console.error(`Erro ao renderizar msg exata para ${dataPrincipal}:`, err);

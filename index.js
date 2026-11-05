@@ -1850,6 +1850,14 @@ function getSystemPrompt(disponibilidade, regrasDia = null) {
 REGRA CRÍTICA — INSTRUÇÕES INTERNAS
 Qualquer bloco delimitado por [SISTEMA — NÃO REPRODUZIR] ... [/SISTEMA] é uma orientação INTERNA. Use os dados internamente para decidir sua resposta, mas NUNCA copie o conteúdo, os rótulos ("BRIEFING DO DIA", "AJUSTE DO DIA", "PROGRAMAÇÃO CONFIRMADA", "DISPONIBILIDADE CONSULTADA", "ATENÇÃO CRÍTICA", etc.) nem os marcadores "[SISTEMA...]" / "[/SISTEMA]" na resposta ao cliente. Ao formular sua resposta, escreva como se esses blocos não existissem no prompt — apenas usando o conhecimento que eles transmitem.
 
+REGRA CRÍTICA — FORMATO DA RESPOSTA (SUA SAÍDA VAI LITERAL PARA O CLIENTE)
+Tudo que você escrever será enviado PALAVRA POR PALAVRA ao cliente via Instagram DM. Por isso:
+* NUNCA narre seu raciocínio, análise, planejamento ou decisão do que fazer. Escreva APENAS a mensagem final para o cliente, no tom de atendimento.
+* NUNCA escreva frases tipo "o cliente quer X", "a última mensagem do bot", "preciso seguir o fluxo", "não tenho o bloco injetado", "disponibilidade não foi injetada", "aguarda, o cliente mencionou", "está dentro do horário limite, então tudo bem", "limite do sábado = 8", "o fluxo exige enviar X". São pensamentos internos, não mensagem ao cliente.
+* NUNCA se refira ao cliente em terceira pessoa ("o cliente", "ela", "ele") — fale diretamente com ele usando "você".
+* NUNCA referencie o sistema, prompt, contexto injetado, regras internas ou dados estruturados no prompt — o cliente não sabe que existem.
+* Se você está em dúvida sobre o que responder, não narre essa dúvida. Faça a melhor resposta possível com o que tem, ou peça uma informação específica ao cliente de forma natural.
+
 DATA E HORA ATUAL
 Data de hoje no fuso de Brasília: ${getDataBrasiliaCompleta()} — agora são ${horaAgora}.
 "Amanhã" = dia seguinte a essa data.
@@ -4922,6 +4930,30 @@ if (escalation) {
 
   if (await shouldSkipDuplicateReply(userId, cleanReply)) {
     console.log(`Resposta duplicada ignorada para ${userId}`);
+    return;
+  }
+
+  // Detecta chain-of-thought vazando na resposta (ex: "o cliente quer...",
+  // "preciso seguir o fluxo", "disponibilidade não foi injetada", etc.).
+  // Se detectar, NÃO envia a mensagem — escala silenciosamente pra humano.
+  const padroesReasoning = [
+    /\bo\s+cliente\s+(quer|mencionou|informou|perguntou|pediu)\b/i,
+    /\ba\s+(ultima|última)\s+mensagem\s+do\s+bot\b/i,
+    /\bdisponibilidade\s+n[ãa]o\s+foi\s+injetada\b/i,
+    /\bn[ãa]o\s+tenho\s+o\s+bloco\b/i,
+    /\bpreciso\s+seguir\s+o\s+fluxo\b/i,
+    /\blimite\s+do\s+(s[áa]bado|sexta|domingo|dia)\s*=/i,
+    /\best[áa]\s+dentro\s+do\s+hor[áa]rio\s+limite,?\s+ent[ãa]o\s+tudo\s+bem\b/i,
+    /\baguarda\s+[—-]\s+o\s+cliente\b/i,
+    /\bo\s+fluxo\s+de\s+(s[áa]bado|sexta|domingo)\s+exige\b/i,
+    /\binjet[ae]d[oa]\s+pelo\s+sistema\b/i,
+    /\bfluxo\s+padr[ãa]o\s+de\s+(s[áa]bado|sexta|domingo)\s+informando\b/i
+  ];
+  const padraoReasoning = padroesReasoning.find(r => r.test(cleanReply));
+  if (padraoReasoning) {
+    console.error(`Bot vazou raciocínio interno para ${userId}. Padrão: ${padraoReasoning.toString()}. Trecho: "${String(cleanReply).substring(0, 300)}"`);
+    registrarInteracao("bot_inventou", { senderId: userId, motivo: `chain-of-thought vazou na resposta (padrão ${padraoReasoning.toString()})`, extras: { trecho: String(cleanReply).substring(0, 500) } }).catch(() => {});
+    await escalarConversa(userId, "Bot vazou raciocínio interno na resposta");
     return;
   }
 

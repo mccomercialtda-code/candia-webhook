@@ -77,6 +77,38 @@ function getDiaSemana(dataStr) {
   return dias[d.getDay()];
 }
 
+// Dado uma data BR DD/MM/AAAA de sex/sáb/dom, devolve as outras 2 datas do
+// mesmo fim-de-semana (ex: sex=13/11 → [sab=14/11, dom=15/11]).
+// Retorna [] se a data não for sex/sáb/dom ou inválida.
+function datasDoMesmoFimDeSemana(dataStr) {
+  const [dia, mes, ano] = (dataStr || "").split("/");
+  if (!dia || !mes || !ano) return [];
+  const d = new Date(`${ano}-${mes.padStart(2,"0")}-${dia.padStart(2,"0")}T00:00:00-03:00`);
+  if (isNaN(d.getTime())) return [];
+  const dow = d.getDay(); // 0=dom, 5=sex, 6=sab
+  if (![0,5,6].includes(dow)) return [];
+  // offset para sexta do fim-de-semana atual
+  // domingo → fri = -2, sat = -1
+  // sábado  → fri = -1, dom = +1
+  // sexta   → sab = +1, dom = +2
+  const offsetsPorDow = {
+    0: [-2, -1],   // domingo → sex, sab
+    5: [1, 2],     // sexta → sab, dom
+    6: [-1, 1]     // sábado → sex, dom
+  };
+  const offsets = offsetsPorDow[dow];
+  const out = [];
+  for (const off of offsets) {
+    const alt = new Date(d.getTime());
+    alt.setDate(alt.getDate() + off);
+    const diaAlt = String(alt.getDate()).padStart(2,"0");
+    const mesAlt = String(alt.getMonth() + 1).padStart(2,"0");
+    const anoAlt = alt.getFullYear();
+    out.push(`${diaAlt}/${mesAlt}/${anoAlt}`);
+  }
+  return out;
+}
+
 function convertDateToISO(dateStr) {
   if (!dateStr || typeof dateStr !== "string") return null;
   const parts = dateStr.split("/");
@@ -512,6 +544,30 @@ async function proximoNumeroDoDia(dataISO) {
   } catch {
     return 1;
   }
+}
+
+// Dado uma data de fim-de-semana esgotada, verifica as outras 2 do mesmo FDS
+// e devolve só as que tiverem disponibilidade real (coberto ou descoberto)
+// e estejam no futuro. Resultado: [{data, dia, tipo}, ...]
+async function listarAlternativasFimDeSemana(dataStr) {
+  const alternativas = datasDoMesmoFimDeSemana(dataStr);
+  if (alternativas.length === 0) return [];
+  const hoje = getDataBrasilia();
+  const resultado = [];
+  for (const alt of alternativas) {
+    try {
+      const [dA, mA, aA] = alt.split("/");
+      const dtAlt = new Date(`${aA}-${mA.padStart(2,"0")}-${dA.padStart(2,"0")}T00:00:00-03:00`);
+      if (isNaN(dtAlt.getTime()) || dtAlt < hoje) continue; // ignora passado
+      const dispAlt = await verificarDisponibilidade(alt);
+      if (dispAlt && dispAlt.disponivel !== false && (dispAlt.tipo === "coberto" || dispAlt.tipo === "descoberto")) {
+        resultado.push({ data: alt, dia: dispAlt.diaSemana, tipo: dispAlt.tipo });
+      }
+    } catch (err) {
+      console.error(`Erro ao checar disponibilidade da alternativa ${alt}:`, err);
+    }
+  }
+  return resultado;
 }
 
 async function verificarDisponibilidade(dataStr) {
@@ -2215,6 +2271,8 @@ Nunca usar frases como:
 - "não conseguimos encaixar mais ninguém"
 - "não tem como"
 - "não dá para receber vocês"
+
+* REGRA — ALTERNATIVAS NO MESMO FIM DE SEMANA: se o contexto injetado contém "ALTERNATIVAS NO MESMO FIM DE SEMANA" (ou seja, o sistema já verificou os outros dias de sex/sáb/dom e listou os que ainda têm vaga), COMPLEMENTAR a mensagem de esgotado oferecendo essas alternativas. Formato sugerido: "Mas se quiser, ainda temos vaga pra [dia] [DD/MM] — tem interesse?". Se houver 2 alternativas, listar as duas ("pra sexta 13/11 ou domingo 15/11"). Se a alternativa for descoberta, mencionar discretamente "mas provavelmente ficaria na área externa (na calçada), que é descoberta". NÃO forçar a oferta — se o cliente disser que só pode nesse dia, respeitar.
 
 RESERVAS
 
@@ -4297,6 +4355,11 @@ const querAlterarReserva =
       // ambas condições precisam bater: disponivel=false E tipo=esgotado (defesa em profundidade)
       if (disp && disp.disponivel === false && disp.tipo === "esgotado") {
         disponibilidadeInfo += `⚠️ ATENÇÃO: As reservas para ${data} (${disp.diaSemana}) estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
+        // Se for data de fim-de-semana (sex/sáb/dom), checa as outras 2 e sugere
+        const alternativas = await listarAlternativasFimDeSemana(data);
+        if (alternativas.length > 0) {
+          disponibilidadeInfo += `ALTERNATIVAS NO MESMO FIM DE SEMANA (oferecer ao cliente perguntando se tem interesse): ${alternativas.map(a => `${a.data} (${a.dia}) ${a.tipo === "descoberto" ? "— provavelmente área externa" : ""}`).join("; ")}\n`;
+        }
         registrarInteracao("sem_disponibilidade", { senderId: userId, motivo: `${data} (${disp.diaSemana}) esgotada`, dadosReserva: { data, dia: disp.diaSemana } }).catch(() => {});
       } else if (disp.tipo === "descoberto") {
         disponibilidadeInfo += `Data ${data} (${disp.diaSemana}): disponível. Área coberta praticamente esgotada — provavelmente a reserva ficará na área externa (calçada), mas NUNCA garantir isso ao cliente. Usar a mensagem exata do dia (variante descoberta) que já contém a redação correta ("provavelmente sua reserva ficará na área externa..."). ${disp.vagasDescoberto} vagas de descoberto restantes.\n`;
@@ -4446,6 +4509,10 @@ if (dataPrincipal && !explicitDates.includes(dataPrincipal) && !jaTemReserva) {
     console.log(`Disponibilidade fallback para ${dataPrincipal}:`, JSON.stringify(dispFallback));
     if (dispFallback && dispFallback.disponivel === false && dispFallback.tipo === "esgotado") {
       disponibilidadeInfo += `\n⚠️ ATENÇÃO: As reservas para ${dataPrincipal} estão ESGOTADAS. NÃO confirme nem prometa reserva para essa data. Informe ao cliente que não há mais vagas e sugira outra data.\n`;
+      const alternativasFb = await listarAlternativasFimDeSemana(dataPrincipal);
+      if (alternativasFb.length > 0) {
+        disponibilidadeInfo += `ALTERNATIVAS NO MESMO FIM DE SEMANA (oferecer ao cliente perguntando se tem interesse): ${alternativasFb.map(a => `${a.data} (${a.dia}) ${a.tipo === "descoberto" ? "— provavelmente área externa" : ""}`).join("; ")}\n`;
+      }
     } else if (dispFallback && dispFallback.tipo === "descoberto") {
       disponibilidadeInfo += `\nData ${dataPrincipal} (${dispFallback.diaSemana}): disponível. Área coberta praticamente esgotada — provavelmente a reserva ficará na área externa (calçada), mas NUNCA garantir isso ao cliente. Usar a mensagem exata do dia (variante descoberta) que já contém a redação correta ("provavelmente sua reserva ficará na área externa..."). ${dispFallback.vagasDescoberto} vagas de descoberto restantes.\n`;
     } else if (dispFallback && dispFallback.tipo === "coberto") {

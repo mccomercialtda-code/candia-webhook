@@ -3035,12 +3035,13 @@ async function isGloballyPaused() {
 }
 
 async function pauseConversation(userId) {
-  // pausa temporária por 15 minutos após intervenção humana
-  const ttl = 60 * 15; // 15min em segundos
+  // pausa permanente após intervenção humana. Só o comando /start (Telegram)
+  // reativa. TTL de 30 dias é só salvaguarda pra chave não ficar eterna no Redis.
+  const ttl = 60 * 60 * 24 * 30; // 30 dias
 
   await redisSet(`paused:${userId}`, "1", ttl);
 
-  console.log(`Conversa com ${userId} pausada por ${ttl / 3600} horas`);
+  console.log(`Conversa com ${userId} pausada (aguardando /start para reativar)`);
 }
 
 async function getPendingMessages(userId) {
@@ -4107,16 +4108,8 @@ async function processMessages(userId, myToken) {
 
  let paused = await isPaused(userId);
 if (paused) {
-  const ultimaIntervencao = await redisGet(`ultima_intervencao:${userId}`);
-
-  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
-    await redisDel(`paused:${userId}`);
-    console.log(`Conversa com ${userId} auto-reativada durante processamento`);
-    paused = false;
-  } else {
-    console.log(`Conversa com ${userId} pausada — cancelando processamento`);
-    return;
-  }
+  console.log(`Conversa com ${userId} pausada (intervenção humana) — aguardando /start para reativar`);
+  return;
 }
 
 if (await isGloballyPaused()) {
@@ -5228,8 +5221,9 @@ app.post("/", async (req, res) => {
     console.log(`Mensagem do atendente salva no histórico de ${recipientId}`);
   }
 
-  // registra timestamp da última intervenção humana
-  await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 600);
+  // registra timestamp da última intervenção humana (TTL 30 dias — serve como
+  // marcador persistente de 'esta conversa foi tomada por humano, não reative sem /start')
+  await redisSet(`ultima_intervencao:${recipientId}`, Date.now().toString(), 60 * 60 * 24 * 30);
 
   // busca @ do cliente
   buscarUsernameInstagram(recipientId).catch(() => {});
@@ -5288,13 +5282,8 @@ app.post("/", async (req, res) => {
     }
 
    if (await isPaused(senderId)) {
-  const ultimaIntervencao = await redisGet(`ultima_intervencao:${senderId}`);
-
-  if (!ultimaIntervencao || Date.now() - parseInt(ultimaIntervencao) > 2 * 60 * 60 * 1000) {
-    await redisDel(`paused:${senderId}`);
-    console.log(`Conversa com ${senderId} auto-reativada após pausa antiga`);
-  } else {
-    console.log(`Conversa com ${senderId} pausada — ignorando`);
+  {
+    console.log(`Conversa com ${senderId} pausada — ignorando (aguarda /start)`);
     const msgPausadaTexto = messaging?.message?.text;
     if (msgPausadaTexto) await addToHistory(senderId, "user", msgPausadaTexto);
     return;

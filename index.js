@@ -2181,7 +2181,7 @@ PROMOÇÃO GRUPO / CORTESIA ANIVERSARIANTE / BENEFÍCIO ANIVERSARIANTE
 FEIJOADA
 
 * Servida aos finais de semana
-* Aos sábados tem valor promocional de R$20,00 e acompanha um copo de pilsen 300ml — até as 14h (depois deste horário preço normal do cardápio)
+* Aos sábados tem valor promocional de R$20,00 e acompanha um copo de pilsen 300ml — até as 14h. Fora da promoção (depois das 14h aos sábados, ou nos outros dias de fim de semana), a feijoada custa R$39,00.
 * Também temos FEIJOADA VEGANA — se o cliente perguntar se temos opção vegana, confirmar: "Sim, temos feijoada vegana também 😊 Ela entra na mesma promoção da feijoada tradicional (R$20 aos sábados até as 14h, com copo de pilsen 300ml)"
 * Só mencionar feijoada (tradicional ou vegana) se o cliente perguntar
 * Nunca oferecer espontaneamente
@@ -2426,6 +2426,11 @@ REGRAS GERAIS DO FLUXO (APLICAM-SE A TODOS OS DIAS)
   - Responder assim: "Poxa, então não conseguimos segurar a mesa 😊 Nos [dia da semana] a gente segura a mesa reservada até as [horário-limite]. Depois desse horário, funciona por ordem de chegada — vocês são muito bem-vindos, é só chegar e nossa equipe acomoda direitinho! Só tem um detalhe: como não há reserva confirmada, a cortesia de aniversariante (2 litros de chope) não pode ser garantida — ela depende de reserva ativa dentro do horário."
   - NÃO tentar convencer, NÃO pedir dados, NÃO gerar bloco de reserva
   - Se o cliente responder que quer fazer a reserva mesmo assim (aceitando o risco), pedir para confirmar que vai chegar até o horário-limite. Só gerar [RESERVA:] se cliente confirmar explicitamente que chegará no horário
+
+* DATAS BLOQUEADAS — BAR FECHADO (NÃO ACEITAR RESERVAS):
+  - **18/12/2026 (sexta)**: bar fechado para evento particular. NUNCA emitir [RESERVA:] para essa data. Se o cliente mencionar reserva para 18/12, responder: "No dia 18/12 o bar estará fechado para um evento particular 😊 Infelizmente não conseguimos receber nesse dia. Posso te ajudar com outra data?"
+  - Para essas datas bloqueadas, NÃO oferecer alternativas de "ordem de chegada" nem "mesa em pé" — o bar simplesmente não abre.
+  - A regra vale independente de o cliente dizer que é aniversário, grupo grande, ou qualquer outra justificativa.
 
 * REGRA ABSOLUTA — NUNCA FINGIR CONFIRMAÇÃO:
   - NUNCA diga "combinado", "reserva confirmada", "reserva feita", "anotado", "tudo certo", "perfeito, sua reserva está feita", "então tá reservado" ou qualquer expressão que sinalize reserva concluída SEM incluir o bloco [RESERVA: ...] na mesma resposta
@@ -3518,6 +3523,19 @@ Responda APENAS o JSON válido, sem markdown.`,
       if (dados.data && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(dados.data).trim())) {
         console.warn(`Bot emitiu data inválida "${dados.data}" no bloco [RESERVA:] — tratando como ausente`);
         dados.data = null;
+      }
+      // Datas bloqueadas (bar fechado para evento particular). Se o bot emitiu
+      // [RESERVA:] para uma delas, não grava — escala para o atendente humano.
+      const DATAS_BLOQUEADAS = ["18/12/2026"];
+      if (dados.data) {
+        const dataTrim = String(dados.data).trim();
+        const dataNormalizada = dataTrim.replace(/^(\d)\//, "0$1/").replace(/\/(\d)\//, "/0$1/");
+        if (DATAS_BLOQUEADAS.includes(dataTrim) || DATAS_BLOQUEADAS.includes(dataNormalizada)) {
+          console.warn(`Bot tentou gravar reserva em data bloqueada: ${dataTrim}`);
+          await notifyOwner(`⚠️ Bot tentou reservar em data bloqueada (${dataTrim}) para cliente ${userId}${igUsername ? ` (@${igUsername})` : ""}. Reserva BLOQUEADA — conversa escalada.`);
+          await escalarConversa(userId, `Tentativa de reserva em data bloqueada ${dataTrim}`);
+          return;
+        }
       }
       const faltam = camposObrigatorios.filter(c => !dados[c] || String(dados[c]).trim() === "" || dados[c] === 0);
 

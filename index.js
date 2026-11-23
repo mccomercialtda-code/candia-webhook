@@ -2195,41 +2195,17 @@ OPEN BAR DE QUARTA (PROMOÇÃO)
 * IMPORTANTE — NÃO É ESQUEMA DE FICHAS: nas quartas-feiras o atendimento é em MESA. O garçom leva cada chope até a mesa quando o cliente pedir. NUNCA dizer que o open bar funciona com fichas, autoatendimento ou "se servir à vontade" — isso é característica apenas das sextas/sábados, não das quartas.
 * Resposta padrão quando perguntarem sobre o open bar: "Nas quartas-feiras rola nossa promoção de open bar de chope pilsen 🍺 Das 19h às 22h, à vontade por R$49,90 por pessoa. O atendimento é em mesa — o garçom leva cada chope até você quando pedir 😊"
 
-PACOTE DE CONFRATERNIZAÇÃO DE FIM DE ANO (TER/QUA/QUI) — PROMOÇÃO LIMITADA
+CONFRATERNIZAÇÃO / EVENTO / FESTA DE FIM DE ANO — ESCALADA SILENCIOSA
 
-* Pacote exclusivo para grupos de 10 a 15 pessoas, válido APENAS terça, quarta e quinta-feira
-* Valor: R$119,90 por pessoa
-* Pagamento: 50% no ato da reserva (adiantamento)
-* Incluso no pacote:
-  - Tira-gostos (cardápio abaixo)
-  - Chope pilsen
-  - Caipirinha
-  - Refrigerante
-  - Água
-* Cardápio dos tira-gostos (só informar se o cliente perguntar):
-  - Pastéis da casa
-  - Bolinho de abóbora com carne seca e queijo canastra
-  - Coxinha da asa de frango com molho barbecue de goiabada
-  - Batata frita
-  - Croquete de babaganoush
-  - Linguiça artesanal
-  - Bolinho de feijoada
-* Música ao vivo: às quartas e quintas-feiras. Nas terças não tem música ao vivo. Se o cliente perguntar sobre a programação do dia, consultar normalmente a PROGRAMAÇÃO CONFIRMADA e responder como de costume.
-* QUANDO MENCIONAR:
-  - Se o cliente perguntar sobre "pacote", "confraternização", "fim de ano", "festa de empresa", "happy hour da empresa", "evento corporativo" ou variações → apresentar o pacote.
-  - Se o cliente perguntar genericamente sobre "condições especiais"/"promoção"/"cortesia" e a data da reserva for TERÇA, QUARTA ou QUINTA → pode mencionar o pacote como opção além da cortesia de aniversariante.
-  - Se a data for sexta/sábado/domingo → NÃO mencionar (pacote não vale nesses dias).
-  - Nunca oferecer espontaneamente.
-* QUANDO O CLIENTE QUER FECHAR O PACOTE (REGRA DE ESCALADA OBRIGATÓRIA):
-  - Se o cliente demonstrar interesse em reservar o pacote (ex: "quero fechar o pacote", "topo o pacote", "vamos nessa", "manda os dados pra reserva do pacote") → ESCALAR imediatamente com [ESCALAR: motivo=Interesse no pacote de confraternização] e não processar como reserva comum.
-  - Motivo: a cobrança dos 50% adiantados precisa ser feita pela equipe humana.
-  - Resposta ao cliente antes de escalar: "Perfeito! Vou passar pra equipe aqui, que vai te mandar os próximos passos pra confirmar o pacote (incluindo o pagamento de 50% no ato da reserva). Já já alguém retorna 😊" + bloco [ESCALAR:...] na mesma resposta.
-* SE O GRUPO FOR MENOR QUE 10 OU MAIOR QUE 15, OU SE A DATA FOR SEX/SÁB/DOM:
-  - O pacote NÃO se aplica. ESCALAR silenciosamente com [ESCALAR: motivo=Pacote confraternização com grupo/data fora do padrão] — sem enviar mensagem ao cliente.
-* IMPORTANTE — DIFERENCIAR RESERVA COMUM DE RESERVA DO PACOTE:
-  - Reserva COMUM (mesa simples, sem pacote): segue o fluxo normal — mensagem exata do dia (sáb/sex/dom), ou fluxo genérico (ter/qua/qui), coleta nome/telefone, gera bloco [RESERVA:]. NÃO escalar.
-  - Reserva do PACOTE: cliente demonstrou interesse específico no pacote de R$119,90. Nesse caso SEMPRE escalar (ver regra acima). Nunca gerar [RESERVA:] pro pacote.
-  - Se tiver dúvida, perguntar ao cliente: "Só pra confirmar — você quer a reserva comum (só a mesa) ou quer fechar o nosso pacote de confraternização por R$119,90 por pessoa?"
+* Se o cliente mencionar qualquer uma das palavras-chave abaixo, ESCALAR SILENCIOSAMENTE — responder APENAS com o bloco [ESCALAR: motivo=Interesse em confraternização/evento] e NADA MAIS. Sem texto antes, sem mensagem ao cliente, sem perguntar nada, sem oferecer informação de pacote, cardápio, valor, etc.
+* Palavras-chave que disparam a escalada silenciosa (qualquer variação, maiúscula/minúscula, com ou sem acento):
+  - "confraternização" / "confraternizacao" / "confra"
+  - "evento" / "evento corporativo" / "evento de empresa" / "evento privado"
+  - "festa de fim de ano" / "fim de ano" (quando no contexto de festa/comemoração em grupo)
+  - "festa da empresa" / "happy hour da empresa" / "happy hour corporativo"
+* A regra vale INDEPENDENTE do dia da semana, tamanho do grupo ou qualquer outro contexto.
+* NÃO oferecer pacote, valor, cardápio, condições. NÃO pedir dados do cliente. NÃO gerar [RESERVA:]. Só escalar silenciosamente.
+* Exceção: se a pessoa estiver claramente perguntando sobre uma RESERVA SIMPLES de mesa (ex: "quero reservar pra festa do meu aniversário de 10 pessoas sábado") e não citar essas palavras-chave corporativas, segue fluxo normal de reserva. A palavra "aniversário" sozinha NÃO dispara essa regra — só "confraternização"/"evento"/"festa de fim de ano"/"festa da empresa" e variações listadas.
 
 ALMOÇO EXECUTIVO (SEXTA)
 
@@ -5487,6 +5463,32 @@ if (detectCancelamento(message) && temReservaParaCancelar) {
   console.log(`Cancelamento detectado de ${senderId} — escalando silenciosamente sem responder`);
   await escalarConversa(senderId, "Cliente quer cancelar reserva");
   return;
+}
+
+// Confraternização / evento / festa de fim de ano / festa da empresa → escalar silenciosamente
+// (sem responder nada ao cliente). Palavras-chave corporativas apenas, não dispara em
+// "festa de aniversário" sozinho.
+if (message) {
+  const msgLower = message.toLowerCase();
+  // regex evita falsos positivos como "evento tem?" / "eventualmente" / "evento aniversário" sem contexto corporativo
+  const padroesEvento = [
+    /\bconfraterniza[çc][ãa]o\b/,
+    /\bconfr[ãa]\b/,
+    /\bfesta\s+de\s+fim\s+de\s+ano\b/,
+    /\bfim\s+de\s+ano\b/,
+    /\bfesta\s+(da|de|do)\s+(empresa|trabalho|time|equipe|escrit[óo]rio)\b/,
+    /\bevento\s+(corporativo|privado|de\s+empresa|particular|empresarial)\b/,
+    /\bhappy\s+hour\s+(da|de|do)\s+(empresa|trabalho|time|equipe)\b/,
+    /\bhappy\s+hour\s+corporativo\b/,
+    /\bevento\b/  // "evento" solto já escala; se vier com contexto de aniversário comum, o Claude não seria chamado de qualquer jeito
+  ];
+  const padraoEvento = padroesEvento.find(r => r.test(msgLower));
+  if (padraoEvento) {
+    console.log(`Confraternização/evento detectado de ${senderId} — escalando silenciosamente sem responder. Padrão: ${padraoEvento.toString()}`);
+    await escalarConversa(senderId, "Interesse em confraternização/evento");
+    registrarInteracao("escalada", { senderId, motivo: "Confraternização/evento (escalada silenciosa)", extras: { padrao: padraoEvento.toString(), trecho: message.substring(0, 200) } }).catch(() => {});
+    return;
+  }
 }
 
     // mensagens de atraso/chegada: ignorar sempre, você responde pessoalmente

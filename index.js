@@ -2831,12 +2831,28 @@ function extractExplicitDates(text) {
   // aceita separadores / . e - (ex.: 01/08, 01.08, 01-08, 01/08/2026, 01.08.2026)
   const ddmm = text.match(/\b(\d{1,2})[\/.\-](\d{1,2})(?:[\/.\-](\d{2,4}))?\b/g) || [];
   const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-  const year = now.getFullYear();
+  const anoAtualNow = now.getFullYear();
+  const mesAtualNow = now.getMonth() + 1;
+  const diaAtualNow = now.getDate();
+  // Se o cliente omitiu o ano, usa o ano atual se a data ainda está no futuro;
+  // caso contrário (mês já passou, ou mês atual mas dia já passou), usa ano+1.
+  // Ex: hoje 23/11/2026, cliente diz "30/01" → 30/01/2027.
+  function resolverAnoNumerico(diaNum, mesNum) {
+    if (mesNum > mesAtualNow) return anoAtualNow;
+    if (mesNum < mesAtualNow) return anoAtualNow + 1;
+    // mesmo mês: compara o dia
+    return diaNum >= diaAtualNow ? anoAtualNow : anoAtualNow + 1;
+  }
   const results = ddmm.map(d => {
     const parts = d.split(/[\/.\-]/);
+    const dia = parseInt(parts[0]);
+    const mes = parseInt(parts[1]);
     let ano = parts[2];
     if (ano && ano.length === 2) ano = "20" + ano;
-    if (parts.length === 2 || !ano) return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${year}`;
+    if (parts.length === 2 || !ano) {
+      const anoResolvido = resolverAnoNumerico(dia, mes);
+      return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${anoResolvido}`;
+    }
     return `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${ano}`;
   });
 

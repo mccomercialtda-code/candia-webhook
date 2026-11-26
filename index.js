@@ -4592,6 +4592,22 @@ let systemPrompt = getSystemPrompt(
   regrasDiaConsulta
 );
 
+// Injeta o dia da semana REAL da dataPrincipal como fato autoritativo.
+// LLMs errarm cálculo de data o tempo todo — então em vez de deixar o Claude
+// "calcular" se 29/12/2026 é sábado, informamos direto.
+if (dataPrincipal) {
+  try {
+    const diaSemanaReal = getDiaSemana(dataPrincipal);
+    if (diaSemanaReal) {
+      // Capitaliza para exibição no modelo de confirmação ("Sábado" em vez de "sábado")
+      const diaCap = diaSemanaReal.charAt(0).toUpperCase() + diaSemanaReal.slice(1);
+      systemPrompt += `\n\n[SISTEMA — NÃO REPRODUZIR]FATO AUTORITATIVO — DIA DA SEMANA DA DATA PRINCIPAL:\nA data ${dataPrincipal} cai numa **${diaSemanaReal.toUpperCase()}** (não calcule nem adivinhe — use este valor).\n- No bloco [RESERVA: ...], o campo "dia=" DEVE ser "${diaSemanaReal}".\n- No modelo de confirmação "Reserva confirmada!", o campo "Dia:" DEVE ser "${diaCap}".\n- Os limites (horário-limite da mesa, lugares garantidos, etc.) devem seguir as regras de "${diaSemanaReal}", não inferir de outra forma.\n[/SISTEMA]\n`;
+    }
+  } catch (err) {
+    console.error(`Erro ao calcular diaSemana para ${dataPrincipal}:`, err);
+  }
+}
+
 // Renderiza a mensagem exata do dia (sáb/sex/dom) no código e injeta como bloco pronto.
 // Evita o Claude parafrasear/errar o template. Programação especial sobrepõe (ver abaixo).
 // IMPORTANTE: NÃO injetar se a data estiver ESGOTADA — o Claude precisa ver só o aviso
@@ -5045,7 +5061,7 @@ if (escalation) {
     registrarInteracao("bot_inventou", { senderId: userId, motivo: "vazou marcador interno na resposta", extras: { trecho: String(reply).substring(0, 300) } }).catch(() => {});
   }
 
-  const cleanReply = reply
+  let cleanReply = reply
     .replace(/\[(?:CONSULTAR|RESERVA|ESCALAR|BRIEFING)[^\]]*\]/gs, "")
     // remove marcadores internos que delimitam a mensagem exata no system prompt
     // (o Claude não deve copiá-los, mas se escorregar, strip aqui garante)
@@ -5056,6 +5072,33 @@ if (escalation) {
     .replace(/\[SISTEMA[^\]]*\]/g, "")
     .replace(/\[\/SISTEMA\]/g, "")
     .trim();
+
+  // Pós-correção: Claude às vezes erra o dia da semana no modelo de confirmação
+  // ("Data: 29/12/2026 | Dia: Sábado" quando 29/12/2026 é terça). Se o texto
+  // da resposta contém ambos "Data: DD/MM/AAAA" e "Dia: X", recalcular o dia
+  // a partir da data e substituir.
+  try {
+    const matchData = cleanReply.match(/Data:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i);
+    const matchDia = cleanReply.match(/Dia:\s*([A-Za-zÀ-ÿ-]+)/i);
+    if (matchData && matchDia) {
+      let dataRef = matchData[1];
+      const parts = dataRef.split("/");
+      if (parts[2] && parts[2].length === 2) parts[2] = "20" + parts[2];
+      dataRef = `${parts[0].padStart(2,"0")}/${parts[1].padStart(2,"0")}/${parts[2]}`;
+      const diaReal = getDiaSemana(dataRef);
+      if (diaReal) {
+        const diaCap = diaReal.charAt(0).toUpperCase() + diaReal.slice(1);
+        const diaDito = matchDia[1].toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+        const diaRealNorm = diaReal.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+        if (!diaDito.includes(diaRealNorm) && !diaRealNorm.includes(diaDito)) {
+          console.warn(`Bot errou dia da semana para ${dataRef}: disse "${matchDia[1]}" mas é "${diaReal}". Corrigindo.`);
+          cleanReply = cleanReply.replace(/Dia:\s*[A-Za-zÀ-ÿ-]+/i, `Dia: ${diaCap}`);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Erro na pos-correcao de dia da semana:", err);
+  }
 
   if (await shouldSkipDuplicateReply(userId, cleanReply)) {
     console.log(`Resposta duplicada ignorada para ${userId}`);
